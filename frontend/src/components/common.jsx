@@ -1,5 +1,5 @@
 export const SimTag = ({ children = "SIMULATED", className = "", testid }) => (
-  <span data-testid={testid} className={`sim-tag ${className}`}>{children}</span>
+  <span data-testid={testid} className={`sim-tag shrink-0 whitespace-nowrap ${className}`}>{children}</span>
 );
 
 const tone = (s = "") => {

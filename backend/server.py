@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 INDEXES = {
     "users": [IndexModel([("email", ASCENDING)], name="email", unique=True), IndexModel([("id", ASCENDING)], name="id", unique=True)],
-    "transactions": [IndexModel([("id", ASCENDING)], name="id", unique=True)],
+    "transactions": [IndexModel([("id", ASCENDING)], name="id", unique=True), IndexModel([("reference", ASCENDING)], name="reference", unique=True)],
     "invoices": [IndexModel([("id", ASCENDING)], name="id", unique=True), IndexModel([("transaction_id", ASCENDING)], name="tx")],
     "audit_logs": [IndexModel([("transaction_id", ASCENDING)], name="tx"), IndexModel([("timestamp", DESCENDING)], name="ts")],
     "notifications": [IndexModel([("user_id", ASCENDING), ("created_at", DESCENDING)], name="user_ts")],
@@ -106,7 +106,7 @@ REPORT_TYPES = [
     ("settlement", "Simulated settlement statement", 17),
     ("final", "Final transaction completion report", 19),
 ]
-VERIFICATION_REPORTS = {"blockchain_analysis", "compliance"}
+VERIFICATION_REPORTS = {"compliance"}
 
 
 def now() -> str:
@@ -382,7 +382,7 @@ class ActionIn(BaseModel):
 
 def need(cond: bool, msg: str):
     if not cond:
-        raise HTTPException(400, msg)
+        raise HTTPException(403 if " only" in msg.lower() or msg.lower().startswith("only") else 400, msg)
 
 
 @api.post("/transactions/{tx_id}/actions/{action}")
@@ -612,7 +612,7 @@ async def create_invoice(body: InvoiceIn, user: dict = Depends(admin_user)):
     need(all(c in fees for c in body.items), "Unknown fee item")
     if body.kind == "engagement":
         need(body.party == "recipient", "Engagement invoice is issued to the recipient")
-        need(current_step(tx) == 8, "Engagement invoice can only be issued once the agreement is accepted by both parties")
+        need(current_step(tx) == 8, "Engagement invoice is issued after both parties accept the agreement")
     n = await next_counter("invoice")
     lines = [{"code": c, "description": fees[c]["label"], "amount": fees[c]["amount"]} for c in body.items]
     inv = {
@@ -658,6 +658,7 @@ async def confirm_invoice(inv_id: str, user: dict = Depends(admin_user)):
     inv = await load_invoice(inv_id, user)
     need(inv["status"] == "Payment Submitted (Simulated)", "No simulated payment awaiting confirmation")
     tx = await load_tx(inv["transaction_id"], user)
+    need(not tx.get("on_hold"), "Transaction is on hold")
     ts = now()
     await db.invoices.update_one({"id": inv_id}, {"$set": {"status": "Paid (Simulated)", "paid_at": ts}})
     if inv["kind"] == "engagement":

@@ -1,0 +1,43 @@
+{
+  "summary": "First full test of VaultBridge Escrow simulation. Backend: 9/9 pytest cases pass (one first-run failure was a test-ordering race in my notifications test under xdist; it passed when re-run alone). Covered: the full 19-step lifecycle, out-of-order and role guards, decline and re-send, onboarding reject and resubmit, hold/resume, engagement and standard invoices, fees validation, all 7 PDFs, uploads, notifications and audit scope. Frontend: ran the full 19-step lifecycle end to end on a transaction created in the UI (VB-ETH-2026-004), switching between all 3 demo accounts. Confirmations animated 1/12 to 12/12 in about 24s, and the final status was 'COMPLETED — SIMULATION'. All 7 report PDFs downloaded as valid %PDF files, plus the invoice PDF and the admin upload (downloaded by the sender). Also tested in the UI: decline and re-send, onboarding reject (reason shown) and resubmit, hold/resume (party actions hidden), fee edit persisting after reload (then restored), the recipient's read-only proposed charges, generate invoice, pay and confirm, notifications bell and mark-all-read, audit page, the reset dialog guard (checkbox enables submit; cancelled, not submitted), and the mobile sidebar. No functional bugs found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/transactions/{id}/actions/{action}", "issue": "Role violations (e.g. recipient calling send_invitations) return 400 'Administrator only', while the other admin endpoints return 403. Inconsistent status codes."},
+      {"endpoint": "POST /api/invoices/{id}/confirm", "issue": "Does not check tx.on_hold. An admin can confirm the engagement payment while the transaction is on hold, which moves the workflow from step 10 to 11 during a hold."},
+      {"endpoint": "GET /api/reports/{tx}/blockchain_analysis/pdf", "issue": "This is a verification report and becomes available at step 13, before AML. A party who downloads it then sets report_access early, so step 15 ('both parties access verification reports') completes automatically once AML finishes, without the party opening the post-AML compliance report."},
+      {"endpoint": "POST /api/transactions", "issue": "The reference number comes from count_documents()+1 plus a find loop. Two simultaneous creates could pick the same reference, and there is no unique index on reference."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Blockchain Explorer", "issues": ["The 'SIMULATED' tag next to the long transaction hash wraps onto 2 lines ('SIMULATE/D'). Add whitespace-nowrap or shrink-0."]},
+      {"screen": "Mobile header", "issues": ["The transaction selector cuts the reference text off ('VB-ETH-2026-005 · SIMUL') at 390px."]},
+      {"screen": "Mobile sidebar sheet", "issues": ["Console a11y warning: 'DialogContent requires a DialogTitle'. Add a visually hidden SheetTitle."]},
+      {"screen": "Onboarding form", "issues": ["The submit button stays enabled before the fictional-data checkbox is ticked; the backend returns 400 and a toast appears. Other dialogs disable submit until checked, so this is inconsistent."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_vaultbridge_lifecycle.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Optional: return 403 for role violations in run_action, to match the admin_user dependency",
+    "Block confirm_invoice (and pay) while the transaction is on hold",
+    "Only count report_access toward step 15 after AML completes (or only for downloads made at step >= 15)",
+    "Add a unique index on transactions.reference",
+    "Fix the wrapping SIMULATED tag on the Explorer hash row, the truncated mobile tx selector and the missing DialogTitle on the mobile sheet",
+    "server.py is 876 lines; consider splitting it into routers (auth, transactions/actions, invoices, reports)"
+  ],
+  "critical_code_review_comments": [
+    "server.py is over 700 lines; run_action is about 170 lines of if/elif and would be cleaner as a dispatch table",
+    "The hold check is inconsistent between run_action and the invoice confirm endpoint",
+    "/admin/reset deletes every audit_log, notification and transaction without a filter. This is by design for a demo, but it is destructive. Consider scoping it, or confirming that no real data lives in this DB."
+  ],
+  "updated_files": ["/app/backend/tests/test_vaultbridge_lifecycle.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Used admin@vaultbridge.demo / AdminDemo#2026, sender@vaultbridge.demo / SenderDemo#2026, recipient@vaultbridge.demo / RecipientDemo#2026 from /app/memory/test_credentials.md. Login cards' testids are demo-account-administrator / demo-account-sender / demo-account-recipient.",
+  "seed_data_creation": "Created test transactions VB-ETH-2026-002 (TEST_Misc, step 2, with a paid standard invoice and an upload), 003 (TEST_Lifecycle, COMPLETED via API), 004 (TEST_UI, COMPLETED via UI, with an upload), and 005 (TEST_Decline, step 4, with a paid sender invoice). There is no delete endpoint, so they remain. The seeded VB-ETH-2026-001 was not modified. The fee escrow_admin was changed to 1500123 and restored to 1500000. POST /api/admin/reset was NOT called: the test-data rules forbid running reset or bulk-delete, so the reset was only checked up to the confirm dialog. The main agent or user should run the reset manually if a clean demo is wanted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use transaction-selector + transaction-option-{REF} (force click) to pick a tx; the selection persists in localStorage vb_tx. Onboarding requires filling onboarding-contact_name-input (empty by default) and ticking the checkbox. Mobile: use '[data-testid=nav-x]:visible' because nav links are duplicated. Step 15 needs BOTH parties to download a verification report before the sender can request settlement. Run the pytest file with REACT_APP_BACKEND_URL exported; the deposit wait takes about 26s."
+}

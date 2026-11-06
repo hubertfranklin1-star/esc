@@ -44,7 +44,7 @@ const OnboardingForm = ({ tx, party, act }) => {
         <Checkbox data-testid="onboarding-fictional-checkbox" checked={f.fictional_confirmed} onCheckedChange={(v) => setF({ ...f, fictional_confirmed: !!v })} className="mt-0.5" />
         I confirm all information is fictional demonstration data.
       </label>
-      <Button className="mt-4" data-testid="onboarding-submit-button" onClick={() => act("submit_onboarding", f, "Simulated onboarding submitted")}>Submit onboarding</Button>
+      <Button className="mt-4" data-testid="onboarding-submit-button" disabled={!f.fictional_confirmed} onClick={() => act("submit_onboarding", f, "Simulated onboarding submitted")}>Submit onboarding</Button>
     </Panel>
   );
 };

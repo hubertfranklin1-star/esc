@@ -3,7 +3,7 @@ import { NavLink, Outlet, Navigate } from "react-router-dom";
 import {
   LayoutDashboard, ArrowLeftRight, Users, ClipboardCheck, ShieldCheck, Boxes, Receipt, FileText, Landmark, ScrollText, Settings, LogOut, Menu, TriangleAlert,
 } from "lucide-react";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/context/AuthContext";
 import { TxProvider, useTx } from "@/context/TxContext";
@@ -65,11 +65,11 @@ const TopBar = ({ onMenu }) => {
     <header className="sticky top-9 z-30 flex items-center gap-3 border-b border-[#26354D] bg-[#0B111E]/85 px-4 py-3 backdrop-blur-xl md:px-8">
       <button data-testid="mobile-menu-button" onClick={onMenu} className="rounded-md border border-[#26354D] p-2 lg:hidden"><Menu className="h-4 w-4" /></button>
       <Select value={selectedId} onValueChange={select}>
-        <SelectTrigger data-testid="transaction-selector" className="w-[200px] border-[#26354D] bg-[#111827] font-mono text-xs sm:w-[260px]">
+        <SelectTrigger data-testid="transaction-selector" className="w-[220px] border-[#26354D] bg-[#111827] font-mono text-[11px] sm:w-[260px] sm:text-xs">
           <SelectValue placeholder="Select transaction" />
         </SelectTrigger>
         <SelectContent>
-          {list.map((t) => <SelectItem key={t.id} value={t.id} data-testid={`transaction-option-${t.reference}`} className="font-mono text-xs">{t.reference} · SIMULATED</SelectItem>)}
+          {list.map((t) => <SelectItem key={t.id} value={t.id} data-testid={`transaction-option-${t.reference}`} className="font-mono text-xs">{t.reference} · SIM</SelectItem>)}
         </SelectContent>
       </Select>
       {tx && <div className="hidden md:block"><StatusPill status={tx.status} testid="topbar-tx-status" /></div>}
@@ -86,7 +86,7 @@ const Shell = () => {
       <SimBanner />
       <aside className="fixed bottom-0 left-0 top-9 z-40 hidden w-64 border-r border-[#26354D] bg-[#0D1422] lg:block"><SideNav /></aside>
       <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="left" className="w-64 border-[#26354D] bg-[#0D1422] p-0 pt-9"><SideNav onNavigate={() => setOpen(false)} /></SheetContent>
+        <SheetContent side="left" className="w-64 border-[#26354D] bg-[#0D1422] p-0 pt-9"><SheetTitle className="sr-only">Navigation</SheetTitle><SideNav onNavigate={() => setOpen(false)} /></SheetContent>
       </Sheet>
       <div className="lg:pl-64">
         <TopBar onMenu={() => setOpen(true)} />

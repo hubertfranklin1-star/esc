@@ -60,7 +60,7 @@ export default function Reports() {
               {r.available ? <FileText className="h-5 w-5 text-sky-300" /> : <Lock className="h-5 w-5 text-slate-500" />}
               <div>
                 <div className="text-sm font-semibold text-white">{r.title}</div>
-                <div className="font-mono text-[10px] uppercase tracking-wider text-amber-300">PDF · SIMULATION watermark{["compliance", "blockchain_analysis"].includes(r.type) ? " · verification" : ""}</div>
+                <div className="font-mono text-[10px] uppercase tracking-wider text-amber-300">PDF · SIMULATION watermark{r.type === "compliance" ? " · verification" : ""}</div>
               </div>
             </div>
             <Button size="sm" variant={r.available ? "default" : "outline"} disabled={!r.available} className="mt-4 gap-1.5 self-start" data-testid={`report-download-${r.type}`} onClick={() => get(r)}>
