@@ -1,0 +1,84 @@
+{
+  "project_name": "VAULTBRIDGE ESCROW",
+  "archetype": "THE PERFORMANCE PRO / INSTITUTIONAL FINTECH",
+  "theme": "Dark Mode (Deep Navy / Charcoal Slate)",
+  "persistent_simulation_banner": {
+    "text": "SIMULATION ENVIRONMENT — NO REAL ASSETS OR PAYMENTS",
+    "style": "bg-amber-500/15 border-b border-amber-500/30 text-amber-300 font-mono text-xs font-semibold py-2 px-4 tracking-wider uppercase text-center fixed top-0 left-0 right-0 z-50 flex items-center justify-center gap-2 backdrop-blur-md"
+  },
+  "typography": {
+    "font_family_primary": "Plus Jakarta Sans, Inter, sans-serif",
+    "font_family_mono": "JetBrains Mono, Roboto Mono, monospace",
+    "font_sizes": {
+      "h1": "text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight",
+      "h2": "text-2xl sm:text-3xl font-semibold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-semibold",
+      "h4": "text-lg font-medium",
+      "body": "text-sm sm:text-base text-slate-300 leading-relaxed",
+      "caption": "text-xs font-mono text-slate-400 uppercase tracking-widest"
+    }
+  },
+  "colors": {
+    "background": "#0B111E",
+    "surface_slate": "#111827",
+    "surface_card": "#182235",
+    "surface_border": "#26354D",
+    "primary_text": "#F8FAFC",
+    "secondary_text": "#94A3B8",
+    "accent_electric_blue": "#38BDF8",
+    "accent_gold": "#F59E0B",
+    "status_positive": "#10B981",
+    "status_warning": "#F59E0B",
+    "status_danger": "#EF4444",
+    "status_info": "#0284C7"
+  },
+  "left_navigation": {
+    "items": [
+      "Overview",
+      "Transactions",
+      "Participants",
+      "Onboarding",
+      "Compliance Centre",
+      "Blockchain Explorer",
+      "Invoices and Fees",
+      "Reports",
+      "Settlement",
+      "Audit Logs",
+      "Settings"
+    ]
+  },
+  "key_components": {
+    "simulation_banner": "Persistent top banner highlighting test state with amber warning badges.",
+    "role_selector": "Sender, Recipient, Administrator toggle bar with distinct permission views.",
+    "workflow_stepper": "19-step interactive lifecycle pipeline with detailed modal triggers for each stage.",
+    "financial_summary_cards": "Displays $6,000,000,000 illustrative transaction data with currency breakdown and gas estimates.",
+    "blockchain_explorer": "Interactive mock block visualizer with block hashes, confirmations counter, and gas price sliders.",
+    "compliance_matrix": "Matrix showing 7 key regulatory/AML checks with active statuses.",
+    "settlement_approval_modal": "Dual-control admin authorization interface with cryptographic signature simulation.",
+    "in_app_inbox": "Notification center displaying real-time simulation audit logs and state changes."
+  },
+  "image_urls": [
+    {
+      "category": "Ethereum Vault Visual",
+      "url": "https://images.unsplash.com/photo-1622790698141-94e30457ef12?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njl8MHwxfHNlYXJjaHwxfHxldGhlcmV1bSUyMGNyeXB0b2N1cnJlbmN5JTIwZmluYW5jaWFsJTIwc2VjdXJpdHklMjB2YXVsdHxlbnwwfHx8fDE3OTM5NTgwMTd8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Gold Ethereum asset emblem on circuit motherboard background"
+    },
+    {
+      "category": "Blockchain Security Node",
+      "url": "https://images.unsplash.com/photo-1641580543317-4cea85891afe?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njl8MHwxfHNlYXJjaHwzfHxldGhlcmV1bSUyMGNyeXB0b2N1cnJlbmN5JTIwZmluYW5jaWFsJTIwc2VjdXJpdHklMjB2YXVsdHxlbnwwfHx8fDE3OTM5NTgwMTd8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Close up futuristic Ethereum cryptographic node"
+    }
+  ],
+  "testing_and_attributes": {
+    "requirement": "All interactive elements (buttons, inputs, tabs, dropdowns, table rows) must contain role-based data-testid attributes in kebab-case."
+  },
+  "instructions_to_main_agent": [
+    "Ensure the top persistent simulation banner is always mounted at the top of the viewport (fixed position with z-50).",
+    "Add top padding (pt-12) to the main container so content doesn't get covered by the fixed simulation banner.",
+    "Utilize JetBrains Mono or monospace font styling for all ETH hashes, wallet addresses, block numbers, transaction IDs, and currency amounts.",
+    "Implement the 19-step workflow stepper with interactive stage details and simulation state actions.",
+    "Provide clear role switcher (Sender, Recipient, Administrator) with contextual capability toggles.",
+    "Integrate PDF report export modal with a prominent 'SIMULATION' watermark overlay.",
+    "Include a full reset button in Settings to return the VB-ETH-2026-001 simulation to default state."
+  ]
+}
