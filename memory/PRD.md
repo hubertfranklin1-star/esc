@@ -13,6 +13,7 @@ User choices: ETH price fixed at $2,350; pre-filled sample fees; admin reset-dem
 Administrator (escrow agent), Sender (Demo Investment Entity), Recipient (Demo Acquisition Company).
 
 ## Implemented (2026-11-06)
+- v2 simplification (user request): flow cut from 19 to 10 steps (join → approve → sign → pay fee → confirm → deposit → verify → request release → release); escrow fee invoice auto-created after both sign; single "What you need to do" card on Home; menu cut to Home, Deals, Payments, Documents, Checks (admin), Activity, Settings; all "simulated/fictional" wording removed (kept a small DEMO badge and a faint DEMO watermark/footer on PDFs as a minimal safeguard). Tested iteration_2: backend 12/12, frontend all flows pass; minor issues fixed after.
 - Full 19-step lifecycle with role/order enforcement, decline/re-send, onboarding reject/resubmit, hold/resume
 - Fee engine, invoices (engagement + standard), simulated pay/confirm, invoice PDFs
 - Explorer with time-based 12 confirmations animation, simulated analysis, release tx

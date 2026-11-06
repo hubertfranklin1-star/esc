@@ -1,3 +1,4 @@
+import { Navigate } from "react-router-dom";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader, Panel, StatusPill } from "@/components/common";
@@ -10,7 +11,8 @@ const STATUSES = ["Pending", "Under Review", "More Info Needed", "Approved", "Re
 export default function Checks() {
   const { tx, act } = useTx();
   const { user } = useAuth();
-  const editable = user.role === "admin" && !tx.aml.completed_at;
+  if (user.role !== "admin") return <Navigate to="/" replace />;
+  const editable = !tx.aml.completed_at;
   return (
     <div data-testid="checks-page">
       <PageHeader title="Checks" desc={tx.aml.completed_at ? `All checks approved on ${dt(tx.aml.completed_at)}.` : "Checks are approved together when you verify the deposit. You can change any one here first."} />

@@ -103,7 +103,7 @@ export default function Payments() {
     <div data-testid="payments-page">
       <PageHeader title="Payments" desc="Invoices and fees for this deal."
         actions={isAdmin && <Button data-testid="new-invoice-button" disabled={tx.on_hold || !!tx.completed_at} onClick={() => setOpen(true)}>New invoice</Button>} />
-      <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
+      <div className="grid gap-6 xl:grid-cols-[1fr_340px] [&>*]:min-w-0">
         <Panel title="Invoices" testid="invoices-table">
           {invoices.length === 0 ? <Empty testid="invoices-empty">No invoices yet. The escrow fee invoice is created when both parties sign.</Empty> : (
             <div className="overflow-x-auto">

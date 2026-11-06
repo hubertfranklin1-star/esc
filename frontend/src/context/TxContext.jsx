@@ -23,7 +23,7 @@ export const TxProvider = ({ children }) => {
 
   useEffect(() => {
     loadList().then((l) => {
-      if (l.length && !l.find((t) => t.id === selectedId)) select(l[0].id);
+      if (l.length && !l.find((t) => t.id === selectedId)) select(l[l.length - 1].id);
     }).catch(() => {});
   }, [loadList, selectedId]);
 

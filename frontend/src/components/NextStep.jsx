@@ -32,7 +32,8 @@ const Card = ({ title, text, children, done }) => (
 );
 
 const JoinForm = ({ tx, party, act }) => {
-  const [f, setF] = useState({ legal_name: tx[`${party}_name`], contact_name: "", contact_email: tx[`${party}_email`], wallet_address: newWallet() });
+  const prev = tx.onboarding[party].data || {};
+  const [f, setF] = useState({ legal_name: prev.legal_name || tx[`${party}_name`], contact_name: prev.contact_name || "", contact_email: prev.contact_email || tx[`${party}_email`], wallet_address: prev.wallet_address || newWallet() });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const field = (k, label) => (
     <div className="space-y-1.5"><Label>{label}</Label><Input data-testid={`join-${k}-input`} value={f[k]} onChange={set(k)} className="bg-[#0B111E]" /></div>
@@ -171,7 +172,8 @@ const AdminStep = ({ tx, act, refresh }) => {
         {declined.map((p) => <Button key={p} className="mr-2" data-testid={`resend-${p}-button`} onClick={() => act("resend_invitation", { party: p }, "Invitation re-sent")}>Re-send to {p}</Button>)}
       </Card>
     );
-  if (s <= 2) return <Card title="Waiting for both parties to join" text={`Sender: ${tx.onboarding.sender.status === "not_started" ? "not joined yet" : "joined"} · Recipient: ${tx.onboarding.recipient.status === "not_started" ? "not joined yet" : "joined"}`} />;
+  const joinState = (p) => ({ not_started: "not joined yet", rejected: "asked to update" }[tx.onboarding[p].status] || "joined");
+  if (s <= 2) return <Card title="Waiting for both parties to join" text={`Sender: ${joinState("sender")} · Recipient: ${joinState("recipient")}`} />;
   if (s === 3) return <Card title="Approve both parties" text="Check their details, then approve."><ApproveParties tx={tx} act={act} /></Card>;
   if (s === 6 && inv)
     return (

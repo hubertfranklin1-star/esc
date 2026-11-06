@@ -352,7 +352,7 @@ async def create_transaction(body: TxCreate, user: dict = Depends(admin_user)):
         n += 1
         ref = f"VB-ETH-2026-{n:03d}"
     tx = await new_transaction(ref, body.usd_value, body.sender_name.strip(), body.recipient_name.strip(), body.network)
-    await log(tx, user, "Transaction created", f"{ref} — illustrative value {money(body.usd_value)}")
+    await log(tx, user, "Deal created", f"{ref} — deal value {money(body.usd_value)}")
     return present(tx)
 
 
