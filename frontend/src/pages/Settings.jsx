@@ -20,7 +20,7 @@ export default function SettingsPage() {
       await api.post("/admin/reset");
       const l = await loadList();
       select(l[0].id);
-      toast.success("Demo reset — VB-ETH-2026-001 restored to Awaiting onboarding");
+      toast.success("Demo reset — VB-ETH-2026-001 is back at the start");
       nav("/");
       return true;
     } catch (e) { toast.error(errMsg(e)); return false; }
@@ -35,22 +35,20 @@ export default function SettingsPage() {
           <KV label="Role" value={cap(user.role)} />
           <KV label="Organisation" value={user.organisation} />
         </Panel>
-        <Panel title="Simulation parameters" testid="settings-params">
-          <KV label="Mode" value="SIMULATION ONLY" />
-          <KV label="Illustrative ETH price" value="$2,350.00 (fixed, fictional)" mono />
-          <KV label="Required simulated confirmations" value="12" mono />
-          <KV label="Network" value="Ethereum Mainnet (simulated only)" />
-          <KV label="Real wallets, payments or blockchain" value="Never connected" />
-          {user.role === "admin" && <Button variant="outline" size="sm" className="mt-3" data-testid="settings-go-fees" onClick={() => nav("/invoices")}>Configure demonstration fees</Button>}
+        <Panel title="Escrow settings" testid="settings-params">
+          <KV label="ETH price" value="$2,350.00" mono />
+          <KV label="Confirmations needed" value="12" mono />
+          <KV label="Network" value="Ethereum Mainnet" />
+          {user.role === "admin" && <Button variant="outline" size="sm" className="mt-3" data-testid="settings-go-fees" onClick={() => nav("/payments")}>Edit fees</Button>}
         </Panel>
         {user.role === "admin" && (
-          <Panel title="Reset demonstration" sub="Deletes all simulated transactions, invoices, notifications, uploads and logs, restores default fees, and re-creates VB-ETH-2026-001." testid="settings-reset" className="lg:col-span-2">
+          <Panel title="Reset demo" sub="Clears all deals, invoices, messages, files and activity, and starts VB-ETH-2026-001 again." testid="settings-reset" className="lg:col-span-2">
             <Button variant="destructive" data-testid="reset-demo-button" onClick={() => setOpen(true)} className="gap-1.5"><RotateCcw className="h-4 w-4" /> Reset demo</Button>
           </Panel>
         )}
       </div>
-      <ConfirmDialog open={open} onOpenChange={setOpen} testid="reset-dialog" title="Reset the demonstration?" description="All simulated records will be removed and the default transaction restored. Demo accounts are kept."
-        checkLabel="I understand all simulated history will be cleared." confirmLabel="Reset demo" onConfirm={reset} />
+      <ConfirmDialog open={open} onOpenChange={setOpen} testid="reset-dialog" title="Reset the demo?" description="Everything is cleared and the starting deal is created again. Accounts are kept."
+        checkLabel="I understand all history will be cleared." confirmLabel="Reset demo" onConfirm={reset} />
     </div>
   );
 }

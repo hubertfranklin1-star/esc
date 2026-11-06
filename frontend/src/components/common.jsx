@@ -1,9 +1,6 @@
-export const SimTag = ({ children = "SIMULATED", className = "", testid }) => (
-  <span data-testid={testid} className={`sim-tag shrink-0 whitespace-nowrap ${className}`}>{children}</span>
-);
-
 const tone = (s = "") => {
   const v = s.toLowerCase();
+  if (/(unpaid|payment sent|more info|waiting|awaiting)/.test(v)) return "border-amber-500/40 bg-amber-500/10 text-amber-300";
   if (/(approval|approved|accepted|paid|completed|confirmed|released|credited)/.test(v)) return "border-emerald-500/40 bg-emerald-500/10 text-emerald-300";
   if (/(rejection|rejected|declined|hold)/.test(v)) return "border-red-500/40 bg-red-500/10 text-red-300";
   if (/(additional|pending confirmation|submitted|awaiting)/.test(v)) return "border-amber-500/40 bg-amber-500/10 text-amber-300";
@@ -52,11 +49,11 @@ export const Panel = ({ title, actions, children, className = "", testid, sub })
   </section>
 );
 
-export const KV = ({ label, value, mono, sim, testid }) => (
+export const KV = ({ label, value, mono, testid }) => (
   <div className="flex flex-col gap-1 border-b border-[#26354D]/60 py-2.5 last:border-0 sm:flex-row sm:items-center sm:justify-between">
     <span className="text-xs text-slate-400">{label}</span>
     <span data-testid={testid} className={`flex items-center gap-2 break-all text-sm text-slate-100 ${mono ? "font-mono" : ""}`}>
-      {value ?? "—"} {sim && <SimTag />}
+      {value ?? "—"}
     </span>
   </div>
 );

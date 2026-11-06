@@ -4,16 +4,12 @@ import { Toaster } from "@/components/ui/sonner";
 import { AuthProvider } from "@/context/AuthContext";
 import AppLayout from "@/components/AppLayout";
 import Login from "@/pages/Login";
-import Overview from "@/pages/Overview";
+import Home from "@/pages/Home";
 import Transactions from "@/pages/Transactions";
-import Participants from "@/pages/Participants";
-import Onboarding from "@/pages/Onboarding";
-import Compliance from "@/pages/Compliance";
-import Explorer from "@/pages/Explorer";
-import Invoices from "@/pages/Invoices";
-import Reports from "@/pages/Reports";
-import Settlement from "@/pages/Settlement";
-import AuditLogs from "@/pages/AuditLogs";
+import Payments from "@/pages/Payments";
+import Documents from "@/pages/Documents";
+import Checks from "@/pages/Checks";
+import Activity from "@/pages/Activity";
 import SettingsPage from "@/pages/Settings";
 
 function App() {
@@ -23,16 +19,12 @@ function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route element={<AppLayout />}>
-            <Route index element={<Overview />} />
-            <Route path="transactions" element={<Transactions />} />
-            <Route path="participants" element={<Participants />} />
-            <Route path="onboarding" element={<Onboarding />} />
-            <Route path="compliance" element={<Compliance />} />
-            <Route path="explorer" element={<Explorer />} />
-            <Route path="invoices" element={<Invoices />} />
-            <Route path="reports" element={<Reports />} />
-            <Route path="settlement" element={<Settlement />} />
-            <Route path="audit" element={<AuditLogs />} />
+            <Route index element={<Home />} />
+            <Route path="deals" element={<Transactions />} />
+            <Route path="payments" element={<Payments />} />
+            <Route path="documents" element={<Documents />} />
+            <Route path="checks" element={<Checks />} />
+            <Route path="activity" element={<Activity />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

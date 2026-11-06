@@ -44,7 +44,7 @@ export const TxProvider = ({ children }) => {
     return () => { clearInterval(id); };
   }, [refresh, confirming]);
 
-  const act = async (action, data = {}, success = "Simulated action recorded") => {
+  const act = async (action, data = {}, success = "Done") => {
     try {
       const r = await api.post(`/transactions/${tx.id}/actions/${action}`, { data });
       setTx(r.data);

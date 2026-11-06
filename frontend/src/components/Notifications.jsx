@@ -25,7 +25,7 @@ export const NotificationList = ({ items, onRead, limit, testid = "notification-
         </div>
         <p className="mt-1 text-xs leading-relaxed text-slate-400">{n.body}</p>
         <div className="mt-1 font-mono text-[10px] text-slate-500">
-          {n.kind === "email" ? "SIMULATED EMAIL · " : ""}{dt(n.created_at)}
+          {n.kind === "email" ? "EMAIL · " : ""}{dt(n.created_at)}
         </div>
       </li>
     ))}
@@ -50,7 +50,7 @@ export const NotificationsBell = () => {
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[22rem] border-[#26354D] bg-[#111827] p-0">
         <div className="flex items-center justify-between border-b border-[#26354D] px-3 py-2">
-          <span className="eyebrow">Inbox & notifications</span>
+          <span className="eyebrow">Messages</span>
           <Button size="sm" variant="ghost" data-testid="notifications-read-all" onClick={readAll}>Mark all read</Button>
         </div>
         <div className="max-h-[60vh] overflow-y-auto"><NotificationList items={items} onRead={readOne} limit={30} /></div>

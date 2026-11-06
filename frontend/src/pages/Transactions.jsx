@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
-import { PageHeader, Panel, StatusPill, SimTag } from "@/components/common";
+import { PageHeader, Panel, StatusPill } from "@/components/common";
 import { useTx } from "@/context/TxContext";
 import { useAuth } from "@/context/AuthContext";
 import { api, errMsg } from "@/lib/api";
@@ -19,7 +19,7 @@ const CreateDialog = ({ open, onOpenChange }) => {
   const create = async () => {
     try {
       const r = await api.post("/transactions", { ...f, usd_value: Number(f.usd_value) });
-      toast.success(`${r.data.reference} created (simulated)`);
+      toast.success(`${r.data.reference} created — invitations sent`);
       await loadList();
       select(r.data.id);
       return true;
@@ -35,12 +35,12 @@ const CreateDialog = ({ open, onOpenChange }) => {
     </div>
   );
   return (
-    <ConfirmDialog open={open} onOpenChange={onOpenChange} testid="create-tx-dialog" title="Create simulated transaction"
-      description="Parties are linked to the demo sender and recipient accounts. ETH quantity uses the fixed $2,350 demonstration rate." confirmLabel="Create transaction" onConfirm={create}>
+    <ConfirmDialog open={open} onOpenChange={onOpenChange} testid="create-tx-dialog" title="New deal"
+      description="Invitations go to the sender and recipient right away. ETH amount uses $2,350 per ETH." confirmLabel="Create deal" onConfirm={create}>
       <div className="space-y-3">
-        {field("usd_value", "Illustrative value (USD, fictional)", "number")}
-        {field("sender_name", "Sender entity (fictional)")}
-        {field("recipient_name", "Recipient entity (fictional)")}
+        {field("usd_value", "Deal value (USD)", "number")}
+        {field("sender_name", "Sender company")}
+        {field("recipient_name", "Recipient company")}
       </div>
     </ConfirmDialog>
   );
@@ -54,26 +54,26 @@ export default function Transactions() {
   const isAdmin = user.role === "admin";
   const toggleHold = async (t) => {
     if (t.id !== tx.id) select(t.id);
-    else await act(t.on_hold ? "resume" : "hold", {}, t.on_hold ? "Transaction resumed" : "Transaction placed on hold");
+    else await act(t.on_hold ? "resume" : "hold", {}, t.on_hold ? "Deal resumed" : "Deal on hold");
   };
   return (
     <div data-testid="transactions-page">
-      <PageHeader eyebrow="Transactions" title="Escrow transactions" desc="All records are fictional simulation data."
-        actions={isAdmin && <Button data-testid="create-transaction-button" onClick={() => setOpen(true)} className="gap-1.5"><Plus className="h-4 w-4" /> New transaction</Button>} />
+      <PageHeader title="Deals" desc="Tap a deal to open it."
+        actions={isAdmin && <Button data-testid="create-transaction-button" onClick={() => setOpen(true)} className="gap-1.5"><Plus className="h-4 w-4" /> New deal</Button>} />
       <Panel>
         <div className="overflow-x-auto">
           <Table className="vb-table">
             <TableHeader>
-              <TableRow><TableHead>Reference</TableHead><TableHead>Parties</TableHead><TableHead>Illustrative value</TableHead><TableHead>Simulated ETH</TableHead><TableHead>Step</TableHead><TableHead>Status</TableHead><TableHead>Created</TableHead><TableHead /></TableRow>
+              <TableRow><TableHead>Reference</TableHead><TableHead>Parties</TableHead><TableHead>Value</TableHead><TableHead>ETH</TableHead><TableHead>Step</TableHead><TableHead>Status</TableHead><TableHead>Created</TableHead><TableHead /></TableRow>
             </TableHeader>
             <TableBody>
               {list.map((t) => (
                 <TableRow key={t.id} data-testid={`tx-row-${t.reference}`} className={`cursor-pointer ${t.id === selectedId ? "bg-sky-500/5" : ""}`} onClick={() => { select(t.id); nav("/"); }}>
-                  <TableCell className="font-mono text-xs text-white">{t.reference} <SimTag className="ml-1" /></TableCell>
+                  <TableCell className="font-mono text-xs text-white">{t.reference}</TableCell>
                   <TableCell className="text-xs">{t.sender_name}<div className="text-slate-500">→ {t.recipient_name}</div></TableCell>
                   <TableCell className="font-mono text-xs">{usd(t.usd_value)}</TableCell>
                   <TableCell className="font-mono text-xs">{ethFmt(t.eth_quantity, 2)}</TableCell>
-                  <TableCell className="font-mono text-xs">{Math.min(t.current_step, 19)}/19</TableCell>
+                  <TableCell className="font-mono text-xs">{Math.min(t.current_step, 10)}/10</TableCell>
                   <TableCell><StatusPill status={t.status} /></TableCell>
                   <TableCell className="text-xs text-slate-400">{dt(t.created_at)}</TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
