@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { CheckCircle2, Hourglass, Shuffle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -52,40 +53,33 @@ const JoinForm = ({ tx, party, act }) => {
           </div>
         </div>
       </div>
+      <AgreementTerms tx={tx} />
+      <label className="flex items-center gap-3 text-sm text-slate-200">
+        <Checkbox data-testid="join-rules-checkbox" checked={!!f.rules_accepted} onCheckedChange={(v) => setF({ ...f, rules_accepted: !!v })} /> I have read and accept the escrow rules
+      </label>
       <div className="flex flex-wrap gap-2">
-        <Button data-testid="join-submit-button" onClick={() => act("join", f, "You joined the deal")}>Join the deal</Button>
+        <Button data-testid="join-submit-button" disabled={!f.rules_accepted} onClick={() => act("join", f, "You joined the deal")}>Enter the escrow</Button>
         {tx.invitations[party].status === "pending" && <Button variant="outline" data-testid="join-decline-button" onClick={() => act("decline", {}, "Invitation declined")}>Decline</Button>}
       </div>
     </div>
   );
 };
 
-const SignForm = ({ tx, act }) => {
-  const [ok, setOk] = useState(false);
-  return (
-    <div className="space-y-4">
-      <AgreementTerms tx={tx} />
-      <label className="flex items-center gap-3 text-sm text-slate-200">
-        <Checkbox data-testid="sign-agree-checkbox" checked={ok} onCheckedChange={(v) => setOk(!!v)} /> I agree to these terms
-      </label>
-      <Button data-testid="sign-submit-button" disabled={!ok} onClick={() => act("sign_agreement", {}, "Agreement signed")}>Sign agreement</Button>
-    </div>
-  );
-};
-
-const useFeeInvoice = (tx) => {
+const useInvoice = (tx, id, stamp) => {
   const [inv, setInv] = useState(null);
   useEffect(() => {
-    if (tx.payment.invoice_id) api.get(`/invoices?transaction_id=${tx.id}`).then((r) => setInv(r.data.find((i) => i.id === tx.payment.invoice_id)));
-  }, [tx.id, tx.payment.invoice_id, tx.payment.submitted_at]);
+    if (id) api.get(`/invoices?transaction_id=${tx.id}`).then((r) => setInv(r.data.find((i) => i.id === id)));
+  }, [tx.id, id, stamp]);
   return inv;
 };
+const useFeeInvoice = (tx) => useInvoice(tx, tx.payment.invoice_id, tx.payment.submitted_at);
+const fee = (inv, v = inv.amount) => (inv.currency === "ETH" ? ethFmt(v, 2) : usd(v));
 
 const InvoiceBox = ({ inv, children }) => (
   <div className="space-y-4">
     <div className="rounded-md border border-[#26354D] bg-[#0B111E] p-4">
-      {inv.items.map((l) => <KV key={l.code} label={l.description} value={usd(l.amount)} mono />)}
-      <KV label="Total" value={<b data-testid="fee-total">{usd(inv.amount)}</b>} mono />
+      {inv.items.map((l) => <KV key={l.code} label={l.description} value={fee(inv, l.amount)} mono />)}
+      <KV label="Total" value={<b data-testid="fee-total">{fee(inv)}</b>} mono />
     </div>
     {children}
   </div>
@@ -98,24 +92,26 @@ const call = async (fn, ok, refresh) => {
 const PartyStep = ({ tx, party, act, refresh }) => {
   const s = tx.current_step;
   const inv = useFeeInvoice(tx);
+  const of = tx.onboarding_fees?.[party] || {};
+  const obInv = useInvoice(tx, of.invoice_id, of.submitted_at);
   const ob = tx.onboarding[party];
   if (tx.invitations[party].status === "declined") return <Card title="You declined this invitation" text="Ask the admin to re-send it if you change your mind." />;
+  if (!tx.invitations_sent_at) return <Card title="No invitation yet" text="You'll receive an invitation email from VaultBridge Escrow when the admin opens this deal." />;
   if (["not_started", "rejected"].includes(ob.status))
     return (
       <Card title="Join the deal" text={ob.status === "rejected" ? `The admin asked you to update your details${ob.note ? `: ${ob.note}` : "."}` : `You're invited to deal ${tx.reference}. Fill in your details to join.`}>
         <JoinForm tx={tx} party={party} act={act} />
       </Card>
     );
-  if (s === 4 && !tx.agreement[`${party}_accepted_at`]) return <Card title="Sign the agreement" text="Read the short terms and sign."><SignForm tx={tx} act={act} /></Card>;
-  if (party === "recipient" && s === 5 && inv)
+  if (s <= 3 && obInv && !of.submitted_at)
     return (
-      <Card title="Pay the escrow fee" text="Pay the fee so the sender can deposit the ETH.">
-        <InvoiceBox inv={inv}><Button data-testid="pay-fee-button" onClick={() => call(() => api.post(`/invoices/${inv.id}/pay`), "Payment sent", refresh)}>Pay {usd(inv.amount)}</Button></InvoiceBox>
+      <Card title="Pay the onboarding fee" text="Because of the size of this deal, each party pays an onboarding fee to open their escrow account. Both parties must pay before the admin can approve.">
+        <InvoiceBox inv={obInv}><Button data-testid="pay-onboarding-button" onClick={() => call(() => api.post(`/invoices/${obInv.id}/pay`), "Onboarding fee paid", refresh)}>Pay {fee(obInv)}</Button></InvoiceBox>
       </Card>
     );
-  if (party === "sender" && s === 7)
+  if (party === "sender" && s === 5)
     return (
-      <Card title="Deposit ETH into escrow" text={`Send ${ethFmt(tx.eth_quantity, 2)} to the escrow wallet.`}>
+      <Card title="Deposit ETH into escrow" text={`The escrow is open. Send ${ethFmt(tx.eth_quantity, 2)} to the escrow wallet.`}>
         <div className="mb-4 rounded-md border border-[#26354D] bg-[#0B111E] p-4">
           <KV label="Amount" value={ethFmt(tx.eth_quantity, 6)} mono />
           <KV label="Escrow wallet" value={tx.escrow_vault_address} mono />
@@ -123,8 +119,21 @@ const PartyStep = ({ tx, party, act, refresh }) => {
         <Button data-testid="deposit-button" onClick={() => act("deposit", {}, "Deposit sent")}>Deposit {ethFmt(tx.eth_quantity, 2)}</Button>
       </Card>
     );
-  if (party === "sender" && s === 9)
-    return <Card title="Release the funds" text="When you're happy, ask us to release the ETH to the recipient."><Button data-testid="request-release-button" onClick={() => act("request_release", {}, "Release requested")}>Release funds to recipient</Button></Card>;
+  if (party === "recipient" && s === 8)
+    return (
+      <Card title="Request your funds" text="The AML report has been released. Review it on the Forensics page, then request the funds.">
+        <Button data-testid="request-release-button" onClick={() => act("request_release", {}, "Funds requested")}>Request {ethFmt(tx.eth_quantity, 2)}</Button>
+      </Card>
+    );
+  if (party === "recipient" && s === 9 && inv)
+    return (
+      <Card title="Withdrawal AML & fees" text="Before the funds are released, a withdrawal AML check is run on your wallet and the escrow fees are settled.">
+        <div className="mb-4 rounded-md border border-[#26354D] bg-[#0B111E] p-4">
+          <KV label="Receiving wallet" value={tx.onboarding.recipient.data.wallet_address} mono />
+        </div>
+        <InvoiceBox inv={inv}><Button data-testid="pay-fee-button" onClick={() => call(() => api.post(`/invoices/${inv.id}/pay`), "Withdrawal AML & fees submitted", refresh)}>Complete AML & pay {fee(inv)}</Button></InvoiceBox>
+      </Card>
+    );
   const step = tx.steps[s - 1];
   return <Card title="Nothing to do right now" text={`Waiting for ${WHO[step.actor]}: ${step.title.toLowerCase()}.`} />;
 };
@@ -137,6 +146,7 @@ const PartyBox = ({ tx, p }) => {
       <KV label="Company" value={d.legal_name} />
       <KV label="Contact" value={`${d.contact_name} · ${d.contact_email}`} />
       <KV label="Wallet" value={d.wallet_address} mono />
+      <KV label="Onboarding fee" value={tx.onboarding_fees?.[p]?.submitted_at ? "Paid" : "Not paid"} testid={`approve-${p}-fee`} />
     </div>
   );
 };
@@ -161,9 +171,32 @@ const ApproveParties = ({ tx, act }) => {
   );
 };
 
-const AdminStep = ({ tx, act, refresh }) => {
+const InviteForm = ({ tx }) => {
+  const { refresh } = useTx();
+  const [e, setE] = useState({ sender: tx.invite_emails?.sender || "", recipient: tx.invite_emails?.recipient || "" });
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    setBusy(true);
+    try { await api.post(`/transactions/${tx.id}/send-invitations`, e); toast.success("Invitation emails sent"); await refresh(); } catch (err) { toast.error(errMsg(err)); }
+    setBusy(false);
+  };
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 md:grid-cols-2">
+        {["sender", "recipient"].map((p) => (
+          <div key={p} className="space-y-1.5"><Label>{p === "sender" ? `Sender email — ${tx.sender_name}` : `Recipient email — ${tx.recipient_name}`}</Label>
+            <Input type="email" data-testid={`invite-${p}-email-input`} value={e[p]} onChange={(ev) => setE({ ...e, [p]: ev.target.value })} className="bg-[#0B111E]" /></div>
+        ))}
+      </div>
+      <Button data-testid="send-invitations-button" disabled={busy} onClick={send}>{busy ? "Sending…" : tx.invitations_sent_at ? "Re-send invitation emails" : "Send invitation emails"}</Button>
+      <p className="text-[11px] text-slate-500">The email shows the deal details and escrow rules, with a button to enter the escrow.</p>
+    </div>
+  );
+};
+
+const AdminStep = ({ tx, act }) => {
   const s = tx.current_step;
-  const inv = useFeeInvoice(tx);
+  const nav = useNavigate();
   if (tx.on_hold) return <Card title="This deal is on hold" text="Resume it to continue."><Button data-testid="resume-button" onClick={() => act("resume", {}, "Deal resumed")}>Resume deal</Button></Card>;
   const declined = ["sender", "recipient"].filter((p) => tx.invitations[p].status === "declined");
   if (declined.length)
@@ -173,26 +206,32 @@ const AdminStep = ({ tx, act, refresh }) => {
       </Card>
     );
   const joinState = (p) => ({ not_started: "not joined yet", rejected: "asked to update" }[tx.onboarding[p].status] || "joined");
-  if (s <= 2) return <Card title="Waiting for both parties to join" text={`Sender: ${joinState("sender")} · Recipient: ${joinState("recipient")}`} />;
-  if (s === 3) return <Card title="Approve both parties" text="Check their details, then approve."><ApproveParties tx={tx} act={act} /></Card>;
-  if (s === 6 && inv)
-    return (
-      <Card title="Confirm the fee payment" text="The recipient has paid. Confirm you received it.">
-        <InvoiceBox inv={inv}><Button data-testid="confirm-fee-button" onClick={() => call(() => api.post(`/invoices/${inv.id}/confirm`), "Payment confirmed", refresh)}>Confirm payment</Button></InvoiceBox>
-      </Card>
-    );
-  if (s === 8) {
+  if (!tx.invitations_sent_at) return <Card title="Invite both parties by email" text="Onboarding starts with an invitation email to the sender and the recipient."><InviteForm tx={tx} /></Card>;
+  if (s <= 2) return <Card title="Waiting for both parties to join" text={`Invitations sent. Sender: ${joinState("sender")} · Recipient: ${joinState("recipient")}`}><InviteForm tx={tx} /></Card>;
+  const feeState = (p) => (tx.onboarding_fees?.[p]?.submitted_at ? "paid" : "not paid yet");
+  if (s === 3) return <Card title="Waiting for onboarding fees" text={`Sender: ${feeState("sender")} · Recipient: ${feeState("recipient")}`} />;
+  if (s === 4) return <Card title="Approve both parties" text="Both onboarding fees are paid. Check their details, then approve to open the escrow."><ApproveParties tx={tx} act={act} /></Card>;
+  if (s === 6) {
     const ready = tx.deposit.confirmations >= 12;
     return (
-      <Card title="Verify the deposit" text={ready ? "The deposit is confirmed. Approve the checks to hold it in escrow." : "Waiting for the deposit to confirm…"}>
+      <Card title="Run AML checks on the deposit" text={ready ? "The deposit is confirmed. Complete the AML checks (you can review each check on the Checks page)." : "Waiting for the deposit to confirm…"}>
         <Confirmations n={tx.deposit.confirmations} />
-        <Button className="mt-4" disabled={!ready} data-testid="verify-deposit-button" onClick={() => act("verify_deposit", {}, "Deposit verified")}>Verify & approve checks</Button>
+        <Button className="mt-4" disabled={!ready} data-testid="verify-deposit-button" onClick={() => act("verify_deposit", {}, "AML checks completed")}>Complete AML checks</Button>
       </Card>
     );
   }
+  if (s === 7)
+    return (
+      <Card title="Release the AML report" text="Upload the AML / forensic documents on the Forensics page, then release them to the parties.">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" data-testid="go-forensics-button" onClick={() => nav("/forensics")}>Open Forensics</Button>
+          <Button data-testid="release-aml-report-button" onClick={() => act("release_aml_report", {}, "AML report released")}>Release AML report</Button>
+        </div>
+      </Card>
+    );
   if (s === 10)
     return (
-      <Card title="Release the funds" text={`The sender asked to release ${ethFmt(tx.eth_quantity, 2)} to ${tx.recipient_name}.`}>
+      <Card title="Release the funds" text={`The recipient completed withdrawal AML and fees. Release ${ethFmt(tx.eth_quantity, 2)} to ${tx.recipient_name}.`}>
         <div className="flex gap-2">
           <Button data-testid="release-approve-button" onClick={() => act("release", { decision: "approved" }, "Funds released — deal completed")}>Release funds</Button>
           <Button variant="outline" data-testid="release-decline-button" onClick={() => act("release", { decision: "rejected" }, "Release request declined")}>Decline</Button>

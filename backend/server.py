@@ -2,6 +2,7 @@ import asyncio
 import base64
 import logging
 import os
+import re
 import random
 import secrets
 import uuid
@@ -26,9 +27,12 @@ load_dotenv(ROOT_DIR / ".env")
 try:
     from backend.pdf_reports import build_report, build_forensic_report
     from backend import forensics
+    from backend.mailer import send_email
 except ModuleNotFoundError:
     from pdf_reports import build_report, build_forensic_report
     import forensics
+    from mailer import send_email
+from html import escape
 
 client = AsyncIOMotorClient(os.environ["MONGO_URL"])
 db = client[os.environ["DB_NAME"]]
@@ -49,15 +53,13 @@ REQUIRED_CONF = 12
 CONF_INTERVAL = 2.0
 
 FEE_CATALOG = [
-    ("sender_onboarding", "Sender onboarding fee", 25000, "sender"),
-    ("recipient_onboarding", "Recipient onboarding fee", 25000, "recipient"),
     ("escrow_admin", "Escrow administration", 1500000, "recipient"),
     ("blockchain_analytics", "Blockchain analytics", 75000, "recipient"),
     ("compliance", "Compliance assessment", 150000, "recipient"),
     ("custody_admin", "Custody administration", 600000, "recipient"),
     ("settlement_admin", "Settlement administration", 300000, "recipient"),
 ]
-ENGAGEMENT_ITEMS = ["recipient_onboarding", "escrow_admin", "blockchain_analytics", "compliance", "custody_admin", "settlement_admin"]
+ENGAGEMENT_ITEMS = ["escrow_admin", "blockchain_analytics", "compliance", "custody_admin", "settlement_admin"]
 
 COMPLIANCE_CHECKS = [
     ("identity", "Identity verification"),
@@ -73,24 +75,24 @@ COMPLIANCE_STATUSES = ["Pending", "Under Review", "More Info Needed", "Approved"
 STEPS = [
     ("Sender joins the deal", "sender"),
     ("Recipient joins the deal", "recipient"),
-    ("Admin approves both parties", "admin"),
-    ("Both parties sign the agreement", "both"),
-    ("Recipient pays the escrow fee", "recipient"),
-    ("Admin confirms the fee payment", "admin"),
+    ("Both parties pay the onboarding fee", "both"),
+    ("Admin approves both parties & opens the escrow", "admin"),
     ("Sender deposits ETH into escrow", "sender"),
-    ("Admin verifies the deposit", "admin"),
-    ("Sender requests release of funds", "sender"),
+    ("Admin completes AML checks on the deposit", "admin"),
+    ("Admin releases the AML report", "admin"),
+    ("Recipient requests the funds", "recipient"),
+    ("Recipient completes withdrawal AML & fees", "recipient"),
     ("Admin releases funds to recipient", "admin"),
 ]
 STATUS_BY_STEP = {
-    1: "Awaiting onboarding", 2: "Awaiting onboarding", 3: "Awaiting approval", 4: "Awaiting signatures",
-    5: "Awaiting fee payment", 6: "Confirming fee payment", 7: "Awaiting deposit", 8: "Verifying deposit",
-    9: "Funds held in escrow", 10: "Release pending",
+    1: "Awaiting onboarding", 2: "Awaiting onboarding", 3: "Awaiting onboarding fees", 4: "Awaiting approval",
+    5: "Awaiting deposit", 6: "AML checks in progress", 7: "Preparing AML report", 8: "Funds held in escrow",
+    9: "Withdrawal AML & fees", 10: "Release pending",
 }
 REPORT_TYPES = [
     ("agreement", "Escrow agreement", 4),
-    ("deposit", "Deposit receipt", 8),
-    ("verification", "Verification report", 8),
+    ("deposit", "Deposit receipt", 5),
+    ("verification", "AML verification report", 6),
     ("final", "Final settlement statement", 10),
 ]
 
@@ -216,18 +218,19 @@ def joined(ob: dict) -> bool:
 
 
 def step_flags(tx: dict) -> List[bool]:
-    ob, ag = tx["onboarding"], tx["agreement"]
+    ob = tx["onboarding"]
     dep, st, pay = tx["deposit"], tx["settlement"], tx["payment"]
+    of = tx.get("onboarding_fees", {})
     return [
         joined(ob["sender"]),
         joined(ob["recipient"]),
+        all(of.get(p, {}).get("submitted_at") for p in ("sender", "recipient")),
         all(ob[p]["status"] == "approved" for p in ("sender", "recipient")),
-        bool(ag.get("sender_accepted_at") and ag.get("recipient_accepted_at")),
-        bool(pay.get("submitted_at")),
-        bool(pay.get("confirmed_at")),
         bool(dep.get("initiated_at")),
         bool(tx["aml"].get("completed_at")),
+        bool(tx["aml"].get("report_released_at")),
         bool(st.get("requested_at")),
+        bool(pay.get("submitted_at")),
         bool(tx.get("completed_at")),
     ]
 
@@ -247,7 +250,7 @@ def status_of(tx: dict) -> str:
     if any(tx["invitations"][p]["status"] == "declined" for p in ("sender", "recipient")):
         return "Invitation declined"
     step = current_step(tx)
-    if step == 8 and tx["deposit"].get("confirmations", 0) < REQUIRED_CONF:
+    if step == 6 and tx["deposit"].get("confirmations", 0) < REQUIRED_CONF:
         return "Deposit confirming"
     return STATUS_BY_STEP.get(step, "In progress")
 
@@ -312,11 +315,13 @@ async def new_transaction(reference: str, usd_value: float, sender_name: str, re
         "sender_user_id": sender["id"], "recipient_user_id": recipient["id"],
         "sender_email": sender["email"], "recipient_email": recipient["email"],
         "escrow_vault_address": sim_address(), "sender_wallet_balance": round(qty + 125.5, 6),
-        "recipient_wallet_balance": 0.0, "created_at": now(), "invitations_sent_at": now(),
+        "recipient_wallet_balance": 0.0, "created_at": now(), "invitations_sent_at": None,
+        "invite_emails": {"sender": sender["email"], "recipient": recipient["email"]},
         "invitations": {"sender": dict(party), "recipient": dict(party)},
         "onboarding": {"sender": dict(ob), "recipient": dict(ob)},
         "agreement": {"issued_at": None, "sender_accepted_at": None, "recipient_accepted_at": None},
         "payment": {"invoice_id": None, "submitted_at": None, "confirmed_at": None},
+        "onboarding_fees": {p: {"invoice_id": None, "submitted_at": None, "confirmed_at": None} for p in ("sender", "recipient")},
         "deposit": {"initiated_at": None, "confirmations": 0},
         "analysis": {}, "aml": {"completed_at": None},
         "compliance": {k: {"label": label, "status": "Pending", "note": "", "updated_at": now()} for k, label in COMPLIANCE_CHECKS},
@@ -324,10 +329,49 @@ async def new_transaction(reference: str, usd_value: float, sender_name: str, re
         "settlement": {"status": "none"}, "on_hold": False, "completed_at": None,
     }
     await db.transactions.insert_one(dict(tx))
-    for p in ("sender", "recipient"):
-        await notify(tx, [p], f"You're invited to escrow deal {reference}",
-                     f"VaultBridge Escrow invites {tx[f'{p}_name']} to join deal {reference} as {p}. Value {money(usd_value)}. Open Home to join.", "email")
     return tx
+
+
+def invite_html(tx: dict, p: str) -> str:
+    link = os.environ["APP_URL"].rstrip("/") + "/login"
+    rules = ["Each party pays a one-time onboarding fee to open their escrow account.",
+             f"The sender deposits {eth(tx['eth_quantity'])} into the escrow wallet; it counts after 12 confirmations.",
+             "The deposit is AML-screened on-chain and the AML report is shared with both parties.",
+             "The recipient requests the funds; a withdrawal AML check runs and escrow fees are settled.",
+             "The admin then releases the ETH to the recipient's wallet."]
+    li = "".join(f"<li style='margin:4px 0'>{escape(r)}</li>" for r in rules)
+    return (f"<table role='presentation' width='100%'><tr><td style='padding:24px;font-family:Arial,sans-serif;color:#0B111E'>"
+            f"<h2 style='margin:0 0 12px'>You're invited to escrow deal {escape(tx['reference'])}</h2>"
+            f"<p>{escape(tx[f'{p}_name'])} is invited to join as <b>{p}</b>.</p>"
+            f"<table style='border-collapse:collapse;font-size:14px'>"
+            f"<tr><td style='padding:4px 12px 4px 0;color:#64748B'>Sender</td><td>{escape(tx['sender_name'])}</td></tr>"
+            f"<tr><td style='padding:4px 12px 4px 0;color:#64748B'>Recipient</td><td>{escape(tx['recipient_name'])}</td></tr>"
+            f"<tr><td style='padding:4px 12px 4px 0;color:#64748B'>Deal value</td><td>{escape(money(tx['usd_value']))} ({escape(eth(tx['eth_quantity']))})</td></tr>"
+            f"<tr><td style='padding:4px 12px 4px 0;color:#64748B'>Network</td><td>{escape(tx['network'])}</td></tr></table>"
+            f"<h3 style='margin:18px 0 6px'>Escrow rules</h3><ol style='padding-left:18px;font-size:14px'>{li}</ol>"
+            f"<p style='margin:20px 0'><a href='{link}' style='background:#0284C7;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none'>Enter the escrow</a></p>"
+            f"<p style='font-size:12px;color:#888'>Sent by VaultBridge Escrow. Sign in with the account details your administrator gave you. We will never ask you to share login or wallet secrets by email.</p>"
+            f"</td></tr></table>")
+
+
+class InviteEmailsIn(BaseModel):
+    sender: str
+    recipient: str
+
+
+@api.post("/transactions/{tx_id}/send-invitations")
+async def send_invitations(tx_id: str, body: InviteEmailsIn, user: dict = Depends(admin_user)):
+    tx = await load_tx(tx_id, user)
+    need(not tx.get("completed_at"), "This deal is already completed")
+    emails = {"sender": body.sender.strip().lower(), "recipient": body.recipient.strip().lower()}
+    need(all(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", e) for e in emails.values()), "Enter two valid email addresses")
+    for p, e in emails.items():
+        await send_email(to=e, subject=f"Invitation to escrow deal {tx['reference']} — VaultBridge Escrow", html=invite_html(tx, p))
+        await notify(tx, [p], f"You're invited to escrow deal {tx['reference']}",
+                     f"Invitation email sent to {e}. Read the rules and enter the escrow from Home.", "email")
+    await db.transactions.update_one({"id": tx_id}, {"$set": {"invite_emails": emails, "invitations_sent_at": now()}})
+    await log(tx, user, "Invitation emails sent", f"sender: {emails['sender']} · recipient: {emails['recipient']}")
+    return present(await load_tx(tx_id, user))
 
 
 # ---------- transactions ----------
@@ -393,15 +437,21 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
         msg = f"Invitation re-sent to {p}"
     elif action == "join":
         need(party is not None, "Only an invited party can join")
+        need(bool(tx.get("invitations_sent_at")), "The admin hasn't sent your invitation email yet")
         need(tx["invitations"][party]["status"] != "declined", "You declined this invitation")
         need(tx["onboarding"][party]["status"] in ("not_started", "rejected"), "You have already joined this deal")
         required = ["legal_name", "contact_name", "contact_email", "wallet_address"]
         need(all(str(d.get(k, "")).strip() for k in required), "Please fill in all fields")
         w = str(d["wallet_address"]).strip()
         need(w.startswith("0x") and len(w) == 42, "Wallet address must start with 0x and be 42 characters long")
+        need(bool(d.get("rules_accepted")), "Please read and accept the escrow rules")
         data = {k: str(d.get(k, "")).strip() for k in required}
         sets[f"invitations.{party}"] = {"status": "accepted", "responded_at": now()}
         sets[f"onboarding.{party}"] = {"status": "submitted", "data": data, "submitted_at": now(), "reviewed_at": None, "note": ""}
+        if not tx.get("onboarding_fees", {}).get(party, {}).get("invoice_id"):
+            fee = await onboarding_fee_eth()
+            inv = await make_invoice(tx, party, [{"code": "onboarding", "label": "Escrow onboarding fee", "amount": fee}], "onboarding", currency="ETH")
+            sets[f"onboarding_fees.{party}"] = {"invoice_id": inv["id"], "submitted_at": None, "confirmed_at": None}
         await notify(tx, ["admin"], f"{party.capitalize()} joined the deal", f"{tx['reference']}: {data['legal_name']} joined as {party} and is waiting for approval.")
         msg = f"{party.capitalize()} joined the deal"
     elif action == "decline":
@@ -412,13 +462,15 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
         msg = f"{party.capitalize()} declined the invitation"
     elif action == "approve_parties":
         need(is_admin, "Administrator only")
-        need(step == 3, "Both parties must join first")
+        need(step == 4, "Both parties must join and pay the onboarding fee first")
         for p in ("sender", "recipient"):
             sets[f"onboarding.{p}.status"] = "approved"
             sets[f"onboarding.{p}.reviewed_at"] = now()
-        sets["agreement.issued_at"] = now()
-        await notify(tx, ["sender", "recipient"], "You're approved — please sign the agreement", f"{tx['reference']}: both parties are approved. Open Home to sign the escrow agreement.")
-        msg = "Both parties approved; agreement sent for signing"
+            sets[f"onboarding_fees.{p}.confirmed_at"] = now()
+            await db.invoices.update_one({"id": tx["onboarding_fees"][p]["invoice_id"], "status": "Payment Sent"}, {"$set": {"status": "Paid", "paid_at": now()}})
+        sets["agreement"] = {"issued_at": now(), "sender_accepted_at": tx["onboarding"]["sender"]["submitted_at"], "recipient_accepted_at": tx["onboarding"]["recipient"]["submitted_at"]}
+        await notify(tx, ["sender", "recipient"], "Escrow account open", f"{tx['reference']}: you're approved and the escrow is open. The sender can now deposit the ETH.")
+        msg = "Both parties approved; escrow opened"
     elif action == "reject_party":
         need(is_admin, "Administrator only")
         p = d.get("party")
@@ -427,21 +479,9 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
         sets[f"onboarding.{p}.note"] = str(d.get("note", ""))
         await notify(tx, [p], "Please update your details", f"{tx['reference']}: the admin asked you to update your details. {d.get('note', '')}")
         msg = f"Asked {p} to update their details"
-    elif action == "sign_agreement":
-        need(party is not None, "Only a party can sign the agreement")
-        need(step == 4, "The agreement is not ready to sign")
-        need(not tx["agreement"].get(f"{party}_accepted_at"), "You already signed")
-        sets[f"agreement.{party}_accepted_at"] = now()
-        other = "recipient" if party == "sender" else "sender"
-        if tx["agreement"].get(f"{other}_accepted_at"):
-            fees = (await db.settings.find_one({"key": "fees"}))["items"]
-            inv = await make_invoice(tx, "recipient", [f for f in fees if f["code"] in ENGAGEMENT_ITEMS], "engagement")
-            sets["payment.invoice_id"] = inv["id"]
-        await notify(tx, ["admin"], f"Agreement signed by {party}", f"{tx['reference']}: {party} signed the escrow agreement.")
-        msg = f"{party.capitalize()} signed the agreement"
     elif action == "deposit":
         need(party == "sender", "Only the sender can deposit")
-        need(step == 7, "Deposit is not open yet")
+        need(step == 5, "Deposit is not open yet")
         sets["deposit"] = {
             "initiated_at": now(), "confirmations": 0, "required": REQUIRED_CONF,
             "from_address": tx["onboarding"]["sender"]["data"]["wallet_address"], "to_address": tx["escrow_vault_address"],
@@ -453,7 +493,7 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
         msg = f"Deposit of {eth(tx['eth_quantity'])} sent to escrow"
     elif action == "verify_deposit":
         need(is_admin, "Administrator only")
-        need(step == 8, "There is no deposit to verify yet")
+        need(step == 6, "There is no deposit to check yet")
         need(tx["deposit"].get("confirmations", 0) >= REQUIRED_CONF, "Wait until the deposit reaches 12 confirmations")
         need(not any(c["status"] in ("Rejected", "More Info Needed") for c in tx["compliance"].values()), "Resolve checks marked Rejected or More Info Needed first")
         sets["analysis"] = {
@@ -466,8 +506,8 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
         for k, c in tx["compliance"].items():
             sets[f"compliance.{k}"] = {**c, "status": "Approved", "updated_at": now()}
         sets["aml.completed_at"] = now()
-        await notify(tx, ["sender", "recipient"], "Deposit verified", f"{tx['reference']}: the deposit passed all checks and is held in escrow.")
-        msg = "Deposit verified — all checks approved"
+        await notify(tx, ["sender", "recipient"], "AML checks passed", f"{tx['reference']}: the deposit passed all AML checks and is held in escrow. The AML report will be released shortly.")
+        msg = "AML checks completed — all checks approved"
     elif action == "set_compliance":
         need(is_admin, "Administrator only")
         k, s = d.get("check"), d.get("status")
@@ -475,24 +515,37 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
         need(not tx["aml"].get("completed_at"), "Checks are already completed")
         sets[f"compliance.{k}"] = {"label": tx["compliance"][k]["label"], "status": s, "note": str(d.get("note", "")), "updated_at": now()}
         msg = f"{tx['compliance'][k]['label']} set to {s}"
+    elif action == "release_aml_report":
+        need(is_admin, "Administrator only")
+        need(step == 7, "AML checks must be completed first")
+        need(await db.uploaded_reports.count_documents({"transaction_id": tx["id"], "category": "forensic"}) > 0, "Upload at least one AML / forensic document on the Forensics page first")
+        sets["aml.report_released_at"] = now()
+        await notify(tx, ["sender", "recipient"], "AML report released", f"{tx['reference']}: the AML report is available on the Forensics page. The recipient can now request the funds.")
+        msg = "AML report released to the parties"
     elif action == "request_release":
-        need(party == "sender", "Only the sender can request release")
-        need(step == 9, "Release cannot be requested yet")
+        need(party == "recipient", "Only the recipient can request the funds")
+        need(step == 8, "Funds cannot be requested yet")
+        fees = (await db.settings.find_one({"key": "fees"}))["items"]
+        inv = await make_invoice(tx, "recipient", [f for f in fees if f["code"] in ENGAGEMENT_ITEMS], "engagement")
+        sets["payment"] = {"invoice_id": inv["id"], "submitted_at": None, "confirmed_at": None}
         sets["settlement"] = {"status": "requested", "requested_at": now(), "requested_by": user["email"], "release_eth": tx["eth_quantity"]}
-        await notify(tx, ["recipient", "admin"], "Release requested", f"{tx['reference']}: the sender asked to release {eth(tx['eth_quantity'])} to the recipient.")
-        msg = "Sender requested release of funds"
+        await notify(tx, ["admin", "sender"], "Funds requested", f"{tx['reference']}: the recipient requested {eth(tx['eth_quantity'])}. Withdrawal AML and fees are next.")
+        msg = "Recipient requested the funds"
     elif action == "release":
         need(is_admin, "Administrator only")
-        need(step == 10, "No release request is waiting")
+        need(step == 10, "The recipient must complete withdrawal AML and fees first")
         if d.get("decision") == "approved":
             ts = now()
-            sets.update({"settlement.status": "released", "settlement.approved_at": ts, "settlement.credited_at": ts,
+            await db.invoices.update_one({"id": tx["payment"]["invoice_id"], "status": "Payment Sent"}, {"$set": {"status": "Paid", "paid_at": ts}})
+            sets.update({"payment.confirmed_at": ts, "settlement.status": "released", "settlement.approved_at": ts, "settlement.credited_at": ts,
                          "settlement.release_tx_hash": sim_hash(), "settlement.release_block": random.randint(21_900_001, 22_100_000),
                          "recipient_wallet_balance": round(tx["recipient_wallet_balance"] + tx["eth_quantity"], 6), "completed_at": ts})
             await notify(tx, ["sender", "recipient"], "Funds released — deal completed", f"{tx['reference']}: {eth(tx['eth_quantity'])} was released to the recipient.")
             msg = "Funds released to recipient — deal completed"
         else:
             sets["settlement"] = {"status": "rejected", "rejected_at": now(), "note": str(d.get("note", ""))}
+            sets["payment.submitted_at"] = None
+            await db.invoices.update_one({"id": tx["payment"]["invoice_id"]}, {"$set": {"status": "Cancelled"}})
             await notify(tx, ["sender", "recipient"], "Release request declined", f"{tx['reference']}: the release request was declined. {d.get('note', '')}")
             msg = "Release request declined"
     elif action in ("hold", "resume"):
@@ -552,19 +605,45 @@ async def list_invoices(transaction_id: Optional[str] = None, user: dict = Depen
     return await db.invoices.find(q, {"_id": 0}).sort("issued_at", DESCENDING).to_list(500)
 
 
-async def make_invoice(tx: dict, party: str, fee_items: List[dict], kind: str, user: Optional[dict] = None) -> dict:
+def amt(inv: dict) -> str:
+    return eth(inv["amount"]) if inv.get("currency") == "ETH" else money(inv["amount"])
+
+
+async def onboarding_fee_eth() -> float:
+    doc = await db.settings.find_one({"key": "onboarding_fee"})
+    return doc["amount_eth"] if doc else 2.0
+
+
+class OnboardingFeeIn(BaseModel):
+    amount_eth: float
+
+
+@api.get("/onboarding-fee")
+async def get_onboarding_fee(user: dict = Depends(current_user)):
+    return {"amount_eth": await onboarding_fee_eth()}
+
+
+@api.put("/onboarding-fee")
+async def put_onboarding_fee(body: OnboardingFeeIn, user: dict = Depends(admin_user)):
+    need(0 <= body.amount_eth <= 1000, "Onboarding fee must be between 0 and 1,000 ETH")
+    await db.settings.update_one({"key": "onboarding_fee"}, {"$set": {"amount_eth": body.amount_eth}}, upsert=True)
+    await log(None, user, "Onboarding fee updated", eth(body.amount_eth))
+    return {"amount_eth": body.amount_eth}
+
+
+async def make_invoice(tx: dict, party: str, fee_items: List[dict], kind: str, user: Optional[dict] = None, currency: str = "USD") -> dict:
     n = await next_counter("invoice")
     lines = [{"code": f["code"], "description": f["label"], "amount": f["amount"]} for f in fee_items]
     inv = {
         "id": new_id(), "invoice_number": f"VB-INV-2026-{n:04d}", "transaction_id": tx["id"], "reference": tx["reference"],
         "kind": kind, "party": party,
         "responsible_name": tx[f"{party}_name"], "responsible_user_id": tx[f"{party}_user_id"],
-        "items": lines, "amount": sum(line["amount"] for line in lines), "currency": "USD",
+        "items": lines, "amount": sum(line["amount"] for line in lines), "currency": currency,
         "status": "Unpaid", "issued_at": now(), "submitted_at": None, "paid_at": None,
     }
     await db.invoices.insert_one(dict(inv))
-    await notify(tx, [party], f"New invoice {inv['invoice_number']}", f"{tx['reference']}: an invoice for {money(inv['amount'])} is ready. Open Payments to pay it.")
-    await log(tx, user, f"Invoice {inv['invoice_number']} issued", f"{'Escrow fee' if kind == 'engagement' else 'Invoice'} to {party} — {money(inv['amount'])}")
+    await notify(tx, [party], f"New invoice {inv['invoice_number']}", f"{tx['reference']}: an invoice for {amt(inv)} is ready. Open Home or Payments to pay it.")
+    await log(tx, user, f"Invoice {inv['invoice_number']} issued", f"{ {'engagement': 'Escrow fee', 'onboarding': 'Onboarding fee'}.get(kind, 'Invoice')} to {party} — {amt(inv)}")
     return inv
 
 
@@ -596,8 +675,10 @@ async def pay_invoice(inv_id: str, user: dict = Depends(current_user)):
     await db.invoices.update_one({"id": inv_id}, {"$set": {"status": "Payment Sent", "submitted_at": ts, "payment_ref": "PAY-" + secrets.token_hex(4).upper()}})
     if inv["kind"] == "engagement":
         await db.transactions.update_one({"id": tx["id"]}, {"$set": {"payment.submitted_at": ts}})
-    await notify(tx, ["admin"], f"Payment sent — {inv['invoice_number']}", f"{tx['reference']}: {inv['party']} paid {money(inv['amount'])}. Please confirm.")
-    await log(tx, user, f"Payment sent for {inv['invoice_number']}", money(inv["amount"]))
+    if inv["kind"] == "onboarding":
+        await db.transactions.update_one({"id": tx["id"]}, {"$set": {f"onboarding_fees.{inv['party']}.submitted_at": ts}})
+    await notify(tx, ["admin"], f"Payment sent — {inv['invoice_number']}", f"{tx['reference']}: {inv['party']} paid {amt(inv)}. Please confirm.")
+    await log(tx, user, f"Payment sent for {inv['invoice_number']}", amt(inv))
     return await load_invoice(inv_id, user)
 
 
@@ -611,6 +692,8 @@ async def confirm_invoice(inv_id: str, user: dict = Depends(admin_user)):
     await db.invoices.update_one({"id": inv_id}, {"$set": {"status": "Paid", "paid_at": ts}})
     if inv["kind"] == "engagement":
         await db.transactions.update_one({"id": tx["id"]}, {"$set": {"payment.confirmed_at": ts}})
+    if inv["kind"] == "onboarding":
+        await db.transactions.update_one({"id": tx["id"]}, {"$set": {f"onboarding_fees.{inv['party']}.confirmed_at": ts}})
     await notify(tx, [inv["party"]], f"Payment confirmed — {inv['invoice_number']}", f"{tx['reference']}: your payment was confirmed.")
     await log(tx, user, f"Payment confirmed for {inv['invoice_number']}")
     return await load_invoice(inv_id, user)
@@ -623,7 +706,7 @@ async def invoice_pdf(inv_id: str, user: dict = Depends(current_user)):
         ("Invoice", [("Invoice number", inv["invoice_number"]), ("Deal reference", inv["reference"]),
                      ("Responsible party", f"{inv['responsible_name']} ({inv['party']})"), ("Payment status", inv["status"]),
                      ("Date issued", inv["issued_at"][:19].replace("T", " ")), ("Date paid", (inv["paid_at"] or "—")[:19].replace("T", " "))]),
-        ("Services", [(line["description"], money(line["amount"])) for line in inv["items"]] + [("TOTAL", money(inv["amount"]))]),
+        ("Services", [(line["description"], amt({**inv, "amount": line["amount"]})) for line in inv["items"]] + [("TOTAL", amt(inv))]),
     ]
     pdf = build_report("Invoice", inv["reference"], sections)
     return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{inv["invoice_number"]}.pdf"'})
@@ -669,21 +752,26 @@ async def report_pdf(tx_id: str, kind: str, user: dict = Depends(current_user)):
 
 
 @api.get("/reports/{tx_id}/uploads")
-async def list_uploads(tx_id: str, user: dict = Depends(current_user)):
-    await load_tx(tx_id, user)
-    return await db.uploaded_reports.find({"transaction_id": tx_id}, {"_id": 0, "content": 0}).sort("uploaded_at", DESCENDING).to_list(200)
+async def list_uploads(tx_id: str, category: str = "document", user: dict = Depends(current_user)):
+    tx = await load_tx(tx_id, user)
+    if category == "forensic" and user["role"] != "admin" and not tx["aml"].get("report_released_at"):
+        return []
+    cat = {"category": "forensic"} if category == "forensic" else {"category": {"$ne": "forensic"}}
+    return await db.uploaded_reports.find({"transaction_id": tx_id, **cat}, {"_id": 0, "content": 0}).sort("uploaded_at", DESCENDING).to_list(200)
 
 
 @api.post("/reports/{tx_id}/uploads")
-async def upload_report(tx_id: str, title: str = Form(...), file: UploadFile = File(...), user: dict = Depends(admin_user)):
+async def upload_report(tx_id: str, title: str = Form(...), category: str = Form("document"), file: UploadFile = File(...), user: dict = Depends(admin_user)):
     tx = await load_tx(tx_id, user)
     content = await file.read()
     need(0 < len(content) <= 5 * 1024 * 1024, "File must be between 1 byte and 5 MB")
-    doc = {"id": new_id(), "transaction_id": tx_id, "title": title.strip() or file.filename, "filename": file.filename,
+    doc = {"id": new_id(), "transaction_id": tx_id, "category": "forensic" if category == "forensic" else "document",
+           "title": title.strip() or file.filename, "filename": file.filename,
            "content_type": file.content_type or "application/octet-stream", "size": len(content),
            "content": base64.b64encode(content).decode(), "uploaded_by": user["email"], "uploaded_at": now()}
     await db.uploaded_reports.insert_one(doc)
-    await notify(tx, ["sender", "recipient"], "New document shared", f"{tx['reference']}: the admin shared '{doc['title']}'.")
+    where = "Forensics" if doc["category"] == "forensic" else "Documents"
+    await notify(tx, ["sender", "recipient"], "New document shared", f"{tx['reference']}: the admin shared '{doc['title']}'. Open {where} to view it.")
     await log(tx, user, f"Document uploaded: {doc['title']}", file.filename)
     return {k: v for k, v in doc.items() if k not in ("_id", "content")}
 
@@ -693,7 +781,9 @@ async def download_upload(up_id: str, user: dict = Depends(current_user)):
     doc = await db.uploaded_reports.find_one({"id": up_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Not found")
-    await load_tx(doc["transaction_id"], user)
+    tx = await load_tx(doc["transaction_id"], user)
+    if doc.get("category") == "forensic" and user["role"] != "admin" and not tx["aml"].get("report_released_at"):
+        raise HTTPException(404, "Not found")
     return Response(base64.b64decode(doc["content"]), media_type=doc["content_type"],
                     headers={"Content-Disposition": f'attachment; filename="{doc["filename"]}"'})
 
@@ -856,7 +946,7 @@ async def seed_data():
         await db.settings.insert_one({"key": "fees", "items": [{"code": c, "label": l, "amount": a, "party": p} for c, l, a, p in FEE_CATALOG]})
     if await db.transactions.count_documents({}) == 0:
         tx = await new_transaction("VB-ETH-2026-001", 6_000_000_000.0, "Demo Investment Entity", "Demo Acquisition Company", "Ethereum Mainnet")
-        await log(tx, None, "Deal created", "VB-ETH-2026-001 created and invitations sent")
+        await log(tx, None, "Deal created", "VB-ETH-2026-001 created — waiting for the admin to send invitation emails")
 
 
 app.include_router(api)

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Download, Search, ShieldAlert, ShieldCheck, ExternalLink } from "lucide-react";
+import { Download, Search, ShieldAlert, ShieldCheck, ExternalLink, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PageHeader, Panel, KV, StatCard, StatusPill, Empty } from "@/components/common";
 import { useTx } from "@/context/TxContext";
+import { useAuth } from "@/context/AuthContext";
 import { api, errMsg, download } from "@/lib/api";
 import { dt, short } from "@/lib/fmt";
 
@@ -133,8 +134,45 @@ const Report = ({ scan }) => {
   );
 };
 
+const ForensicDocs = ({ tx, isAdmin }) => {
+  const [docs, setDocs] = useState([]);
+  const [title, setTitle] = useState("");
+  const [file, setFile] = useState(null);
+  const load = () => api.get(`/reports/${tx.id}/uploads?category=forensic`).then((r) => setDocs(r.data));
+  useEffect(() => { load(); }, [tx.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const upload = async () => {
+    if (!file) return toast.error("Choose a file");
+    const fd = new FormData();
+    fd.append("title", title || file.name);
+    fd.append("category", "forensic");
+    fd.append("file", file);
+    try { await api.post(`/reports/${tx.id}/uploads`, fd); toast.success("AML document uploaded"); setTitle(""); setFile(null); load(); } catch (e) { toast.error(errMsg(e)); }
+  };
+  const visible = isAdmin || tx.aml.report_released_at;
+  return (
+    <Panel title="AML & forensic documents" sub={`${tx.reference} · ${tx.aml.report_released_at ? `released ${dt(tx.aml.report_released_at)}` : "not released yet"}`} testid="forensic-docs">
+      {isAdmin && (
+        <div className="mb-4 flex flex-col gap-2 sm:flex-row">
+          <Input data-testid="forensic-doc-title-input" placeholder="Document title" value={title} onChange={(e) => setTitle(e.target.value)} className="bg-[#0B111E]" />
+          <Input data-testid="forensic-doc-file-input" type="file" onChange={(e) => setFile(e.target.files[0])} className="bg-[#0B111E]" />
+          <Button data-testid="forensic-doc-upload-button" onClick={upload} className="gap-1.5"><Upload className="h-4 w-4" /> Upload</Button>
+        </div>
+      )}
+      {!visible ? <Empty testid="forensic-docs-locked">The AML report will appear here once the admin releases it.</Empty>
+        : docs.length === 0 ? <Empty testid="forensic-docs-empty">No documents uploaded yet.</Empty>
+        : docs.map((u) => (
+          <div key={u.id} data-testid={`forensic-doc-${u.id}`} className="flex items-center justify-between border-b border-[#26354D]/60 py-2.5 last:border-0">
+            <div><div className="text-sm text-white">{u.title}</div><div className="text-xs text-slate-500">{u.filename} · {(u.size / 1024).toFixed(1)} KB · {dt(u.uploaded_at)}</div></div>
+            <Button size="sm" variant="outline" data-testid={`forensic-doc-download-${u.id}`} onClick={() => download(`/reports/uploads/${u.id}/download`, u.filename)}><Download className="h-3.5 w-3.5" /></Button>
+          </div>
+        ))}
+    </Panel>
+  );
+};
+
 export default function Forensics() {
   const { tx } = useTx();
+  const { user } = useAuth();
   const [address, setAddress] = useState("");
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
@@ -156,6 +194,7 @@ export default function Forensics() {
   return (
     <div data-testid="forensics-page" className="space-y-6">
       <PageHeader title="Forensics" desc="Live on-chain analysis of any Ethereum wallet: balance, history, counterparties, OFAC sanctions screening and mixer exposure." />
+      <ForensicDocs tx={tx} isAdmin={user.role === "admin"} />
       <Panel title="Analyse a wallet" testid="forensic-form">
         <form className="flex flex-col gap-2 md:flex-row" onSubmit={(e) => { e.preventDefault(); run(); }}>
           <Input data-testid="forensic-address-input" placeholder="0x… wallet address" value={address} onChange={(e) => setAddress(e.target.value)} className="bg-[#0B111E] font-mono text-xs md:flex-1" />

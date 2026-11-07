@@ -12,7 +12,28 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useTx } from "@/context/TxContext";
 import { useAuth } from "@/context/AuthContext";
 import { api, errMsg, download } from "@/lib/api";
-import { usd, dt, cap } from "@/lib/fmt";
+import { usd, dt, cap, ethFmt } from "@/lib/fmt";
+
+const amt = (inv, v = inv.amount) => (inv.currency === "ETH" ? ethFmt(v, 2) : usd(v, 2));
+const KIND = { engagement: "Escrow fee", onboarding: "Onboarding fee" };
+
+const OnboardingFee = ({ isAdmin }) => {
+  const [v, setV] = useState("");
+  useEffect(() => { api.get("/onboarding-fee").then((r) => setV(r.data.amount_eth)); }, []);
+  const save = async () => {
+    try { await api.put("/onboarding-fee", { amount_eth: Number(v) }); toast.success("Onboarding fee saved"); } catch (e) { toast.error(errMsg(e)); }
+  };
+  return (
+    <Panel title="Onboarding fee" sub="Paid by each party when they join" testid="onboarding-fee-config" actions={isAdmin && <Button size="sm" data-testid="onboarding-fee-save" onClick={save}>Save</Button>}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-white">Per party</span>
+        {isAdmin ? <Input type="number" min="0" step="0.1" data-testid="onboarding-fee-input" value={v} onChange={(e) => setV(e.target.value)} className="h-8 w-32 bg-[#0B111E] text-right font-mono text-xs" />
+          : <span data-testid="onboarding-fee-value" className="font-mono text-sm">{ethFmt(v, 2)}</span>}
+      </div>
+      {isAdmin && <p className="mt-2 text-[11px] text-slate-500">Applies to parties who join after you save.</p>}
+    </Panel>
+  );
+};
 
 const Fees = ({ fees, setFees, isAdmin }) => {
   const save = async () => {
@@ -36,7 +57,7 @@ const Fees = ({ fees, setFees, isAdmin }) => {
 const NewInvoice = ({ open, onOpenChange, fees, onDone }) => {
   const { tx } = useTx();
   const [party, setParty] = useState("sender");
-  const [items, setItems] = useState(["sender_onboarding"]);
+  const [items, setItems] = useState([]);
   const toggle = (c) => setItems(items.includes(c) ? items.filter((x) => x !== c) : [...items, c]);
   const create = async () => {
     try {
@@ -69,9 +90,9 @@ const NewInvoice = ({ open, onOpenChange, fees, onDone }) => {
 
 const Row = ({ inv, user, run }) => (
   <TableRow data-testid={`invoice-row-${inv.invoice_number}`}>
-    <TableCell className="font-mono text-xs text-white">{inv.invoice_number}{inv.kind === "engagement" && <div className="text-[10px] text-amber-300">Escrow fee</div>}</TableCell>
+    <TableCell className="font-mono text-xs text-white">{inv.invoice_number}{KIND[inv.kind] && <div className="text-[10px] text-amber-300">{KIND[inv.kind]}</div>}</TableCell>
     <TableCell className="max-w-[240px] text-xs text-slate-300">{inv.items.map((l) => l.description).join(", ")}</TableCell>
-    <TableCell className="font-mono text-xs">{usd(inv.amount, 2)}</TableCell>
+    <TableCell className="font-mono text-xs">{amt(inv)}</TableCell>
     <TableCell className="text-xs">{inv.responsible_name}<div className="text-slate-500">{cap(inv.party)}</div></TableCell>
     <TableCell><StatusPill status={inv.status} testid={`invoice-status-${inv.invoice_number}`} /></TableCell>
     <TableCell className="text-xs text-slate-400">{dt(inv.issued_at)}</TableCell>
@@ -114,7 +135,7 @@ export default function Payments() {
             </div>
           )}
         </Panel>
-        <Fees fees={fees} setFees={setFees} isAdmin={isAdmin} />
+        <div className="space-y-6"><OnboardingFee isAdmin={isAdmin} /><Fees fees={fees} setFees={setFees} isAdmin={isAdmin} /></div>
       </div>
       {isAdmin && <NewInvoice open={open} onOpenChange={setOpen} fees={fees} onDone={load} />}
     </div>

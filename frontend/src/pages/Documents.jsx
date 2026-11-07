@@ -37,7 +37,7 @@ export default function Documents() {
   const { tx, tick } = useTx();
   const { user } = useAuth();
   const [uploads, setUploads] = useState([]);
-  const load = useCallback(() => api.get(`/reports/${tx.id}/uploads`).then((r) => setUploads(r.data)), [tx.id]);
+  const load = useCallback(() => api.get(`/reports/${tx.id}/uploads?category=document`).then((r) => setUploads(r.data)), [tx.id]);
   useEffect(() => { load(); }, [load, tick]);
   const get = async (r) => {
     try { await download(`/reports/${tx.id}/${r.type}/pdf`, `${tx.reference}-${r.type}.pdf`); } catch (e) { toast.error("Not ready yet"); }

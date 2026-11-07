@@ -19,7 +19,7 @@ const CreateDialog = ({ open, onOpenChange }) => {
   const create = async () => {
     try {
       const r = await api.post("/transactions", { ...f, usd_value: Number(f.usd_value) });
-      toast.success(`${r.data.reference} created — invitations sent`);
+      toast.success(`${r.data.reference} created — send the invitation emails from Home`);
       await loadList();
       select(r.data.id);
       return true;
@@ -36,7 +36,7 @@ const CreateDialog = ({ open, onOpenChange }) => {
   );
   return (
     <ConfirmDialog open={open} onOpenChange={onOpenChange} testid="create-tx-dialog" title="New deal"
-      description="Invitations go to the sender and recipient right away. ETH amount uses $2,350 per ETH." confirmLabel="Create deal" onConfirm={create}>
+      description="Next, send the invitation emails from Home. ETH amount uses $2,350 per ETH." confirmLabel="Create deal" onConfirm={create}>
       <div className="space-y-3">
         {field("usd_value", "Deal value (USD)", "number")}
         {field("sender_name", "Sender company")}
