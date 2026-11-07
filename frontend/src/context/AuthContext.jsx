@@ -33,6 +33,13 @@ export const AuthProvider = ({ children }) => {
     return r.data.user;
   };
 
+  const register = async (body) => {
+    const r = await api.post("/auth/register", body);
+    localStorage.setItem("vb_token", r.data.token);
+    setUser(r.data.user);
+    return r.data.user;
+  };
+
   const logout = () => {
     localStorage.removeItem("vb_token");
     setUser(null);

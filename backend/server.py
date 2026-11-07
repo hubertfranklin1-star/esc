@@ -33,6 +33,7 @@ except ModuleNotFoundError:
     import forensics
     from mailer import send_email
 from html import escape
+from urllib.parse import urlencode
 
 client = AsyncIOMotorClient(os.environ["MONGO_URL"])
 db = client[os.environ["DB_NAME"]]
@@ -172,6 +173,51 @@ async def login(body: LoginIn):
     return {"token": make_token(user), "user": public_user(user)}
 
 
+async def invited_role(email: str) -> Optional[str]:
+    tx = await db.transactions.find_one({"$or": [{"invite_emails.sender": email}, {"invite_emails.recipient": email}], "invitations_sent_at": {"$ne": None}},
+                                        {"_id": 0, "invite_emails": 1}, sort=[("created_at", DESCENDING)])
+    if not tx:
+        return None
+    return "sender" if tx["invite_emails"]["sender"] == email else "recipient"
+
+
+class EmailIn(BaseModel):
+    email: str
+
+
+@api.post("/auth/check-email")
+async def check_email(body: EmailIn):
+    email = body.email.strip().lower()
+    if await db.users.find_one({"email": email}, {"_id": 1}):
+        return {"next": "login"}
+    role = await invited_role(email)
+    return {"next": "register", "role": role} if role else {"next": "login"}
+
+
+class RegisterIn(BaseModel):
+    email: str
+    password: str
+    name: str
+
+
+@api.post("/auth/register")
+async def register(body: RegisterIn):
+    email = body.email.strip().lower()
+    need(len(body.password) >= 8, "Password must be at least 8 characters")
+    need(bool(body.name.strip()), "Please enter your full name")
+    need(not await db.users.find_one({"email": email}, {"_id": 1}), "An account with this email already exists — sign in instead")
+    role = await invited_role(email)
+    need(role is not None, "This email hasn't been invited to an escrow deal")
+    tx = await db.transactions.find_one({f"invite_emails.{role}": email}, {"_id": 0}, sort=[("created_at", DESCENDING)])
+    user = {"id": new_id(), "email": email, "password_hash": hash_pw(body.password), "role": role,
+            "name": body.name.strip(), "organisation": tx[f"{role}_name"], "created_at": now(), "invited": True}
+    await db.users.insert_one(dict(user))
+    await db.transactions.update_many({f"invite_emails.{role}": email, f"onboarding.{role}.status": {"$in": ["not_started", "rejected"]}},
+                                      {"$set": {f"{role}_user_id": user["id"], f"{role}_email": email}})
+    await log(tx, user, "Account created", f"{email} created a {role} account from the invitation")
+    return {"token": make_token(user), "user": public_user(user)}
+
+
 @api.get("/auth/me")
 async def me(user: dict = Depends(current_user)):
     return public_user(user)
@@ -200,7 +246,7 @@ async def notify(tx: dict, targets: List[str], title: str, body: str, kind: str 
     if "admin" in targets:
         ids += [u["id"] async for u in db.users.find({"role": "admin"}, {"id": 1})]
     docs = [{"id": new_id(), "user_id": i, "transaction_id": tx["id"], "reference": tx["reference"], "kind": kind,
-             "title": title, "body": body, "read": False, "created_at": now()} for i in ids]
+             "title": title, "body": body, "read": False, "created_at": now()} for i in ids if i]
     if docs:
         await db.notifications.insert_many(docs)
 
@@ -333,7 +379,7 @@ async def new_transaction(reference: str, usd_value: float, sender_name: str, re
 
 
 def invite_html(tx: dict, p: str) -> str:
-    link = os.environ["APP_URL"].rstrip("/") + "/login"
+    link = os.environ["APP_URL"].rstrip("/") + "/login?" + urlencode({"email": tx["invite_emails"][p]})
     rules = ["Each party pays a one-time onboarding fee to open their escrow account.",
              f"The sender deposits {eth(tx['eth_quantity'])} into the escrow wallet; it counts after 12 confirmations.",
              "The deposit is AML-screened on-chain and the AML report is shared with both parties.",
@@ -350,7 +396,7 @@ def invite_html(tx: dict, p: str) -> str:
             f"<tr><td style='padding:4px 12px 4px 0;color:#64748B'>Network</td><td>{escape(tx['network'])}</td></tr></table>"
             f"<h3 style='margin:18px 0 6px'>Escrow rules</h3><ol style='padding-left:18px;font-size:14px'>{li}</ol>"
             f"<p style='margin:20px 0'><a href='{link}' style='background:#0284C7;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none'>Enter the escrow</a></p>"
-            f"<p style='font-size:12px;color:#888'>Sent by VaultBridge Escrow. Sign in with the account details your administrator gave you. We will never ask you to share login or wallet secrets by email.</p>"
+            f"<p style='font-size:12px;color:#888'>Sent by VaultBridge Escrow. Open the link and continue with this email address: if you're new you'll create your own account and password, otherwise just sign in. We will never ask you to share login or wallet secrets by email.</p>"
             f"</td></tr></table>")
 
 
@@ -364,7 +410,16 @@ EMAIL_RE = r"[^@\s]+@[^@\s]+\.[^@\s]+"
 
 async def deliver_invites(tx: dict, emails: dict, user: dict):
     need(all(re.fullmatch(EMAIL_RE, e) for e in emails.values()), "Enter two valid email addresses")
-    await db.transactions.update_one({"id": tx["id"]}, {"$set": {"invite_emails": emails}})
+    links = {"invite_emails": emails}
+    for p, e in emails.items():
+        if joined(tx["onboarding"][p]):
+            continue
+        existing = await db.users.find_one({"email": e}, {"_id": 0})
+        need(not existing or existing["role"] == p, f"{e} already has a {existing['role'] if existing else ''} account and can't be invited as {p}")
+        links[f"{p}_user_id"] = existing["id"] if existing else None
+        links[f"{p}_email"] = e
+    await db.transactions.update_one({"id": tx["id"]}, {"$set": links})
+    tx = {**tx, **links}
     sent = []
     for p, e in emails.items():
         if joined(tx["onboarding"][p]):
@@ -441,6 +496,7 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
     party = party_of(tx, user)
     step = current_step(tx)
     sets: Dict[str, Any] = {}
+    scan_party = None
     need(not tx.get("completed_at"), "This deal is already completed")
     if action not in ("hold", "resume"):
         need(not tx.get("on_hold"), "This deal is on hold — an admin must resume it")
@@ -470,7 +526,14 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
             inv = await make_invoice(tx, party, [{"code": "onboarding", "label": "Escrow onboarding fee", "amount": fee}], "onboarding", currency="ETH")
             sets[f"onboarding_fees.{party}"] = {"invoice_id": inv["id"], "submitted_at": None, "confirmed_at": None}
         await notify(tx, ["admin"], f"{party.capitalize()} joined the deal", f"{tx['reference']}: {data['legal_name']} joined as {party} and is waiting for approval.")
+        scan_party = party
         msg = f"{party.capitalize()} joined the deal"
+    elif action == "rescan_wallet":
+        need(is_admin, "Administrator only")
+        scan_party = d.get("party")
+        need(scan_party in ("sender", "recipient") and joined(tx["onboarding"][scan_party]), "That party hasn't joined yet")
+        sets[f"onboarding.{scan_party}.scan"] = {"status": "running", "started_at": now()}
+        msg = f"Wallet scan restarted for {scan_party}"
     elif action == "decline":
         need(party is not None, "Only an invited party can decline")
         need(tx["invitations"][party]["status"] == "pending", "Invitation already answered")
@@ -572,9 +635,38 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
     else:
         raise HTTPException(400, "Unknown action")
 
+    if scan_party and action == "join":
+        sets[f"onboarding.{scan_party}"]["scan"] = {"status": "running", "started_at": now()}
     await db.transactions.update_one({"id": tx_id}, {"$set": sets})
     await log(tx, user, msg, str(d.get("note", "")) if d.get("note") else "")
+    if scan_party:
+        wallet = d["wallet_address"].strip() if action == "join" else tx["onboarding"][scan_party]["data"]["wallet_address"]
+        scan_tasks.add(t := asyncio.create_task(auto_scan(tx, scan_party, wallet)))
+        t.add_done_callback(scan_tasks.discard)
     return present(await load_tx(tx_id, user))
+
+
+scan_tasks: set = set()
+
+
+async def auto_scan(tx: dict, party: str, wallet: str):
+    key = f"onboarding.{party}.scan"
+    try:
+        report = await forensics.analyse(wallet)
+    except Exception as e:
+        logger.error("auto wallet scan failed: %s", e)
+        await db.transactions.update_one({"id": tx["id"]}, {"$set": {key: {"status": "failed", "error": str(e)[:200], "finished_at": now()}}})
+        return
+    doc = {"id": new_id(), "label": f"{tx['reference']} · {party} wallet (on join)", "report": report, "created_at": now(),
+           "created_by": "system", "user_id": None, "transaction_id": tx["id"]}
+    await db.forensic_scans.insert_one(dict(doc))
+    r = report["risk"]
+    await db.transactions.update_one({"id": tx["id"]}, {"$set": {key: {
+        "status": "done", "scan_id": doc["id"], "band": r["band"], "score": r["score"], "sanctioned": report["sanctions"]["listed"],
+        "balance_eth": report["balance_eth"], "finished_at": now()}}})
+    await log(tx, None, "Wallet scan on join", f"{party} {wallet} — risk {r['band']} ({r['score']}/100)")
+    await notify(tx, ["admin"], f"{party.capitalize()} wallet scanned", f"{tx['reference']}: risk {r['band']} ({r['score']}/100)"
+                 + (" — SANCTIONS MATCH" if report["sanctions"]["listed"] else ""))
 
 
 # ---------- fees & invoices ----------

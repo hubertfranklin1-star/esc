@@ -147,6 +147,35 @@ const PartyBox = ({ tx, p }) => {
       <KV label="Contact" value={`${d.contact_name} · ${d.contact_email}`} />
       <KV label="Wallet" value={d.wallet_address} mono />
       <KV label="Onboarding fee" value={tx.onboarding_fees?.[p]?.submitted_at ? "Paid" : "Not paid"} testid={`approve-${p}-fee`} />
+      <WalletScan tx={tx} p={p} />
+    </div>
+  );
+};
+
+const BAND = { Low: "text-emerald-300", Medium: "text-amber-300", High: "text-orange-400", Severe: "text-red-400" };
+
+const WalletScan = ({ tx, p }) => {
+  const { act } = useTx();
+  const s = tx.onboarding[p].scan;
+  if (!s) return null;
+  return (
+    <div data-testid={`approve-${p}-scan`} className="mt-3 rounded border border-[#26354D] bg-[#111827] p-3 text-xs">
+      <div className="eyebrow mb-1">Wallet forensic scan</div>
+      {s.status === "running" && <div data-testid={`approve-${p}-scan-running`} className="flex items-center gap-2 text-slate-300"><Hourglass className="h-3.5 w-3.5 animate-pulse text-sky-300" /> Scanning the wallet on Ethereum mainnet…</div>}
+      {s.status === "failed" && (
+        <div className="space-y-2">
+          <div data-testid={`approve-${p}-scan-error`} className="text-red-300">Scan failed: {s.error}</div>
+          <Button size="sm" variant="outline" data-testid={`approve-${p}-rescan`} onClick={() => act("rescan_wallet", { party: p }, "Scan restarted")}>Scan again</Button>
+        </div>
+      )}
+      {s.status === "done" && (
+        <div className="space-y-1">
+          <div data-testid={`approve-${p}-scan-risk`}>Risk: <span className={`font-semibold ${BAND[s.band] || "text-white"}`}>{s.band}</span> ({s.score}/100)</div>
+          <div data-testid={`approve-${p}-scan-sanctions`} className={s.sanctioned ? "font-semibold text-red-400" : "text-slate-300"}>{s.sanctioned ? "Sanctions list match" : "No sanctions list match"}</div>
+          <div className="text-slate-400">Balance: {ethFmt(s.balance_eth)}</div>
+          <button type="button" data-testid={`approve-${p}-scan-pdf`} className="text-sky-300 underline" onClick={() => download(`/forensics/scans/${s.scan_id}/pdf`, `wallet-due-diligence-${p}.pdf`)}>Download wallet report (PDF)</button>
+        </div>
+      )}
     </div>
   );
 };
