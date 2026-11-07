@@ -1,0 +1,48 @@
+{
+  "summary": "Tested invite-link registration (check-email/register), the 2-stage login, deal-creation role conflict, the automatic wallet scan on join and the full new-user flow in API (pytest) and UI (Playwright). Found and fixed 1 CRITICAL frontend bug: AuthContext did not export register(), so every UI account creation failed with the toast 'register is not a function'. After the fix the full UI flow works end to end on VB-ETH-2026-008: /login?email= prefill, the Create-account stage, password-mismatch toast, <8-char toast, landing on Home with only the invited deal and the Join step, join, pay 2 ETH, admin step 4 scans (sender Low 0/100, recipient Medium 25/100, no sanctions match, PDF download works), Approve both. Backend bugs found: a deal is inserted BEFORE the invite/role validation and before the email is sent, so a 400 role conflict or an email failure leaves an orphan deal; the same email is accepted for both parties.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/transactions", "issue": "new_transaction() inserts the deal before deliver_invites() runs its checks. If the role check fails (e.g. admin@vaultbridge.demo as sender -> 400) the orphan deal stays in the database, linked to the demo sender/recipient and with invitations_sent_at=None. Reproduced twice: VB-ETH-2026-004 and VB-ETH-2026-007 now show up for sender@/recipient@vaultbridge.demo. Same thing when the email send fails: 429 rate limit -> 502, but the deal (VB-ETH-2026-008) was still created. Fix: run the email and role checks before the insert, or delete the deal on failure.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "POST /api/transactions, /send-invitations", "issue": "Email provider 429 rate_limited is mapped to HTTPException(502). Cloudflare replaces 502 responses, so the UI toast says 'The origin web server returned an invalid or incomplete response to Cloudflare...' instead of a readable message. Use 503 or 429 with a clear message such as 'Email rate limit, try again in a minute'."},
+      {"endpoint": "POST /api/transactions", "issue": "The same email is accepted for both sender and recipient (VB-ETH-2026-006). invited_role() then always returns 'sender', so the recipient side can never register. Reject sender_email == recipient_email."},
+      {"endpoint": "deliver_invites/notify", "issue": "The invitation notification is created while {party}_user_id is None (the user doesn't exist yet), so it is dropped. Newly registered users see 'No notifications yet' in Messages. Consider creating the notification on register."},
+      {"endpoint": "POST /api/auth/check-email", "issue": "Unauthenticated endpoint reveals whether an email is invited and its role (email enumeration). Acceptable for a demo, but consider rate limiting."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AuthContext", "issue": "register was not included in the Provider value, so the 'Create account & enter escrow' button failed with the toast 'register is not a function'. FIXED by tester.", "selector": "[data-testid=login-submit-button]", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Login - Create your account", "issues": ["register-invite-note <p> uses 'flex items-start gap-2', so the text nodes and the <b>{role}</b> become separate flex columns and the role word floats in its own column ('...escrow deal as the   sender   . Set a password...'). Wrap the text in a <span>."]},
+      {"screen": "Join form", "issues": ["'Your full name' (contact_name) is empty even though the user just entered their name at registration. Prefill it from user.name."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_invite_register_scan.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Move the deliver_invites validation (email format, role conflict, sender!=recipient) before new_transaction() in create_transaction, and roll back (delete the deal) if the email send fails",
+    "Remove the orphan test deals VB-ETH-2026-004, VB-ETH-2026-006 and VB-ETH-2026-007 (created by the bug and by tests; there is no delete endpoint, and they appear for the demo sender/recipient)",
+    "Map an email 429 to a non-502 status with a readable message",
+    "Reject the same email for both parties",
+    "Fix the flex layout of register-invite-note on the Login page",
+    "Optional: prefill join contact_name from the registered user's name; create the invite notification for users who register later"
+  ],
+  "critical_code_review_comments": [
+    "create_transaction: side effects (insert) happen before validation, so it is not atomic",
+    "register(): the role comes from the newest invited deal only. An email invited as sender on one deal and recipient on another can only ever have one role (by design, but no guard or message)",
+    "rescan_wallet does not check whether a scan is already running (double-click starts parallel scans)",
+    "server.py is 1089 lines and should be split (auth, transactions, invoices, forensics)",
+    "Backend uvicorn --reload also watches backend/tests/, so editing test files restarts the server mid-request"
+  ],
+  "updated_files": ["/app/frontend/src/context/AuthContext.jsx", "/app/backend/tests/test_invite_register_scan.py"],
+  "success_rate": {"backend": "89% (8/9; failing: orphan deal on 400)", "frontend": "100% after the register() fix (0% of UI registrations worked before)"},
+  "test_credentials": "Created TEST users (password TestPass#2026): test_ui_s_46730@resend.dev (sender), test_ui_r_46730@resend.dev (recipient), plus pytest users test_reg_s_*/test_reg_r_*@resend.dev. Demo creds unchanged.",
+  "seed_data_creation": "Deals VB-ETH-2026-003 (pytest run aborted at step 3), 005 (step 5), 006 (same-email test), 007 (orphan from the UI conflict test, linked to the demo users), 008 (full UI flow, approved, at step 5). VB-ETH-2026-001 not touched. /api/admin/reset not called.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run pytest with -n 0. The Resend test sink rate-limits fast (429 after about 6 emails in a burst, which gives 502 from the API); wait about 60s between deal creations. The admin can re-send via the Home invite form (send-invitations-button). Select a deal by setting localStorage vb_tx=<id> and reloading. Auto scans finish in about 2-5s. The 'Scan again' (approve-<p>-rescan) UI was not exercised because no scan failed; the rescan API was tested (admin 200 -> running, party 403).",
+  "rca of the issue": "Registration UI: AuthContext.jsx defined register() but the Provider value was {user, ready, login, logout}, so useAuth().register was undefined. Fixed by adding register. Orphan deal: create_transaction calls new_transaction() (insert_one) and only then deliver_invites(), which raises via need() on a role conflict or an email failure. There is no rollback."
+}

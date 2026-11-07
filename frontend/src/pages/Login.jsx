@@ -108,7 +108,7 @@ export default function Login() {
             {stage === "register" && (
               <p data-testid="register-invite-note" className="mt-3 flex items-start gap-2 text-sm text-slate-300">
                 <MailCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
-                This email was invited to an escrow deal as the <b className="text-white">{role}</b>. Set a password to open your account.
+                <span>This email was invited to an escrow deal as the <b className="text-white">{role}</b>. Set a password to open your account.</span>
               </p>
             )}
             <form onSubmit={submit} className="mt-8 space-y-4" data-testid="login-form">

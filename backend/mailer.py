@@ -102,4 +102,6 @@ async def send_email(*, to: str, subject: str, html: str):
             logger.warning("Email paused: %s (%s)", code, e.response.status_code)
             raise HTTPException(503, "Email is temporarily unavailable")
         logger.error("Email send failed: %s %s", e.response.status_code, e.response.text)
-        raise HTTPException(502, "Failed to send email")
+        if e.response.status_code == 429:
+            raise HTTPException(503, "Too many emails at once — wait a minute, then re-send the invitations from Home")
+        raise HTTPException(503, "The invitation email couldn't be sent — please try re-sending from Home")

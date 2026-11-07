@@ -45,7 +45,7 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
   };
 
-  return <AuthCtx.Provider value={{ user, ready, login, logout }}>{children}</AuthCtx.Provider>;
+  return <AuthCtx.Provider value={{ user, ready, login, register, logout }}>{children}</AuthCtx.Provider>;
 };
 
 export const useAuth = () => useContext(AuthCtx);

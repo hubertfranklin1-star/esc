@@ -214,6 +214,9 @@ async def register(body: RegisterIn):
     await db.users.insert_one(dict(user))
     await db.transactions.update_many({f"invite_emails.{role}": email, f"onboarding.{role}.status": {"$in": ["not_started", "rejected"]}},
                                       {"$set": {f"{role}_user_id": user["id"], f"{role}_email": email}})
+    async for t in db.transactions.find({f"{role}_user_id": user["id"]}, {"_id": 0}):
+        await notify(t, [role], f"Welcome to escrow deal {t['reference']}",
+                     "Your account is ready. Read the escrow rules and join the deal from Home.", "email")
     await log(tx, user, "Account created", f"{email} created a {role} account from the invitation")
     return {"token": make_token(user), "user": public_user(user)}
 
@@ -349,7 +352,7 @@ async def next_counter(name: str) -> int:
     return doc["value"]
 
 
-async def new_transaction(reference: str, usd_value: float, sender_name: str, recipient_name: str, network: str) -> dict:
+async def new_transaction(reference: str, usd_value: float, sender_name: str, recipient_name: str, network: str, links: Optional[dict] = None) -> dict:
     sender = await db.users.find_one({"role": "sender"}, {"_id": 0})
     recipient = await db.users.find_one({"role": "recipient"}, {"_id": 0})
     qty = round(usd_value / ETH_PRICE, 6)
@@ -374,6 +377,7 @@ async def new_transaction(reference: str, usd_value: float, sender_name: str, re
         "report_access": {"sender": None, "recipient": None},
         "settlement": {"status": "none"}, "on_hold": False, "completed_at": None,
     }
+    tx.update(links or {})
     await db.transactions.insert_one(dict(tx))
     return tx
 
@@ -408,16 +412,22 @@ class InviteEmailsIn(BaseModel):
 EMAIL_RE = r"[^@\s]+@[^@\s]+\.[^@\s]+"
 
 
-async def deliver_invites(tx: dict, emails: dict, user: dict):
-    need(all(re.fullmatch(EMAIL_RE, e) for e in emails.values()), "Enter two valid email addresses")
+async def invite_links(onboarding: Optional[dict], emails: dict) -> dict:
+    need(all(re.fullmatch(EMAIL_RE, e) for e in emails.values()), "Enter valid email addresses for both parties")
+    need(emails["sender"] != emails["recipient"], "Sender and recipient need different email addresses")
     links = {"invite_emails": emails}
     for p, e in emails.items():
-        if joined(tx["onboarding"][p]):
+        if onboarding and joined(onboarding[p]):
             continue
         existing = await db.users.find_one({"email": e}, {"_id": 0})
-        need(not existing or existing["role"] == p, f"{e} already has a {existing['role'] if existing else ''} account and can't be invited as {p}")
+        need(not existing or existing["role"] == p, f"{e} is already registered as {existing['role'] if existing else ''} and can't be invited as {p}")
         links[f"{p}_user_id"] = existing["id"] if existing else None
         links[f"{p}_email"] = e
+    return links
+
+
+async def deliver_invites(tx: dict, emails: dict, user: dict):
+    links = await invite_links(tx["onboarding"], emails)
     await db.transactions.update_one({"id": tx["id"]}, {"$set": links})
     tx = {**tx, **links}
     sent = []
@@ -462,13 +472,13 @@ async def create_transaction(body: TxCreate, user: dict = Depends(admin_user)):
     if body.usd_value <= 0 or not body.sender_name.strip() or not body.recipient_name.strip():
         raise HTTPException(400, "Value and party names are required")
     emails = {"sender": body.sender_email.strip().lower(), "recipient": body.recipient_email.strip().lower()}
-    need(all(re.fullmatch(EMAIL_RE, e) for e in emails.values()), "Enter valid email addresses for both parties")
+    links = await invite_links(None, emails)
     n = await db.transactions.count_documents({}) + 1
     ref = f"VB-ETH-2026-{n:03d}"
     while await db.transactions.find_one({"reference": ref}):
         n += 1
         ref = f"VB-ETH-2026-{n:03d}"
-    tx = await new_transaction(ref, body.usd_value, body.sender_name.strip(), body.recipient_name.strip(), body.network)
+    tx = await new_transaction(ref, body.usd_value, body.sender_name.strip(), body.recipient_name.strip(), body.network, links)
     await log(tx, user, "Deal created", f"{ref} — deal value {money(body.usd_value)}")
     await deliver_invites(tx, emails, user)
     return present(await load_tx(tx["id"], user))

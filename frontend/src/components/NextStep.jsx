@@ -34,7 +34,8 @@ const Card = ({ title, text, children, done }) => (
 
 const JoinForm = ({ tx, party, act }) => {
   const prev = tx.onboarding[party].data || {};
-  const [f, setF] = useState({ legal_name: prev.legal_name || tx[`${party}_name`], contact_name: prev.contact_name || "", contact_email: prev.contact_email || tx[`${party}_email`], wallet_address: prev.wallet_address || newWallet() });
+  const { user } = useAuth();
+  const [f, setF] = useState({ legal_name: prev.legal_name || tx[`${party}_name`], contact_name: prev.contact_name || user?.name || "", contact_email: prev.contact_email || tx[`${party}_email`], wallet_address: prev.wallet_address || newWallet() });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const field = (k, label) => (
     <div className="space-y-1.5"><Label>{label}</Label><Input data-testid={`join-${k}-input`} value={f[k]} onChange={set(k)} className="bg-[#0B111E]" /></div>
