@@ -1,5 +1,8 @@
 const tone = (s = "") => {
   const v = s.toLowerCase();
+  if (/(severe|high risk|ofac|mixer)/.test(v)) return "border-red-500/40 bg-red-500/10 text-red-300";
+  if (/low risk/.test(v)) return "border-emerald-500/40 bg-emerald-500/10 text-emerald-300";
+  if (/medium risk/.test(v)) return "border-amber-500/40 bg-amber-500/10 text-amber-300";
   if (/(unpaid|payment sent|more info|waiting|awaiting)/.test(v)) return "border-amber-500/40 bg-amber-500/10 text-amber-300";
   if (/(approval|approved|accepted|paid|completed|confirmed|released|credited)/.test(v)) return "border-emerald-500/40 bg-emerald-500/10 text-emerald-300";
   if (/(rejection|rejected|declined|hold)/.test(v)) return "border-red-500/40 bg-red-500/10 text-red-300";

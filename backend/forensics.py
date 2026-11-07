@@ -15,7 +15,8 @@ BASE = "https://api.etherscan.io/v2/api"
 OFAC_URL = "https://raw.githubusercontent.com/0xB10C/ofac-sanctioned-digital-currency-addresses/lists/sanctioned_addresses_ETH.txt"
 ADDR = re.compile(r"^0x[a-fA-F0-9]{40}$")
 WEI = Decimal(10) ** 18
-MAX_TX = 10000
+MAX_TX = 1000
+SPAM = re.compile(r"(https?://|www\.|\.com|\.io|\.org|\.xyz|visit|claim|reward|airdrop|\$)", re.I)
 
 RISKY_SERVICES = {
     "0x722122df12d4e14e13ac3b6895a86e84145b6967": "Tornado Cash: Router",
@@ -88,6 +89,8 @@ async def load_ofac(http: httpx.AsyncClient) -> set:
             _ofac.update(set=addrs, loaded_at=time.time())
     except httpx.HTTPError:
         pass
+    if not _ofac["set"]:
+        raise RuntimeError("sanctions list is temporarily unavailable, please try again")
     return _ofac["set"]
 
 
@@ -138,12 +141,12 @@ async def analyse(address: str) -> dict:
         for f in ("in", "out", "count"):
             parties[k][f] += v[f]
 
-    token_map = defaultdict(lambda: {"symbol": "", "name": "", "contract": "", "in": Decimal(0), "out": Decimal(0), "transfers": 0})
+    token_map = defaultdict(lambda: {"symbol": "", "name": "", "contract": "", "dec": 0, "in": Decimal(0), "out": Decimal(0), "transfers": 0})
     for t in tokens:
         dec = int(t.get("tokenDecimal") or 0)
         val = Decimal(int(t.get("value") or 0)) / (Decimal(10) ** dec)
         tk = token_map[t["contractAddress"].lower()]
-        tk.update(symbol=t.get("tokenSymbol", ""), name=t.get("tokenName", ""), contract=t["contractAddress"].lower())
+        tk.update(symbol=t.get("tokenSymbol", ""), name=t.get("tokenName", ""), contract=t["contractAddress"].lower(), dec=dec)
         tk["transfers"] += 1
         if (t.get("to") or "").lower() == address:
             tk["in"] += val
@@ -153,9 +156,19 @@ async def analyse(address: str) -> dict:
             other = (t.get("to") or "").lower()
         parties[other]["count"] += 1
     holdings = sorted(
-        [{"symbol": v["symbol"], "name": v["name"], "contract": v["contract"], "net": float(v["in"] - v["out"]),
-          "received": float(v["in"]), "sent": float(v["out"]), "transfers": v["transfers"]} for v in token_map.values()],
-        key=lambda x: -x["transfers"])
+        [{"symbol": v["symbol"], "name": v["name"], "contract": v["contract"], "received": float(v["in"]), "sent": float(v["out"]),
+          "transfers": v["transfers"], "dec": v["dec"], "balance": None}
+         for v in token_map.values() if not SPAM.search(f"{v['symbol']} {v['name']}")],
+        key=lambda x: -x["transfers"])[:50]
+    async with httpx.AsyncClient(timeout=30) as http:
+        for h in holdings[:6]:
+            try:
+                raw = await _call(http, "account", "tokenbalance", contractaddress=h["contract"], address=address, tag="latest")
+                h["balance"] = float(Decimal(int(raw or 0)) / (Decimal(10) ** h["dec"]))
+            except Exception:
+                pass
+    for h in holdings:
+        h.pop("dec")
 
     stamps = [int(t["timeStamp"]) for t in normal + internal + tokens if t.get("timeStamp")]
     counterparties = sorted(
@@ -202,7 +215,7 @@ async def analyse(address: str) -> dict:
             "tx_in": n_in, "tx_out": n_out, "unique_counterparties": len(counterparties),
             "history_capped": any(len(x) >= 1000 for x in (normal, internal, tokens)),
         },
-        "tokens": holdings[:50],
+        "tokens": holdings,
         "counterparties": counterparties[:25],
         "sanctions": {"listed": self_sanctioned, "counterparty_hits": sanctioned_hits, "list_size": len(sanctioned),
                       "list_source": "OFAC SDN digital currency addresses (ETH), via github.com/0xB10C/ofac-sanctioned-digital-currency-addresses",

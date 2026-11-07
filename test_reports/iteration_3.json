@@ -1,0 +1,44 @@
+{
+  "summary": "Forensics feature tested end-to-end with live Etherscan data (3 scans total: Tornado Cash donation as admin, 0xab5801... as sender, deal recipient wallet via quick button as recipient in UI). Backend 16/16 pytest passed: 401 unauth on all 4 endpoints, 400 on invalid addresses, Tornado = Severe 100/100 with mixer exposure (self service + 8 TC counterparties + 1 OFAC-listed counterparty, wallet itself not OFAC-listed), normal wallet = Low 0/100 with real balance 16.69 ETH, persistence, list isolation (sender/recipient own only, admin all), cross-user GET/PDF 404, PDF valid (4 pages, contains exact title, no DEMO/SIMULATION watermark; only 'demo' is the requester email admin@vaultbridge.demo). UI: nav-forensics visible for admin/sender/recipient, invalid address toast shows backend message, report renders balance/risk/sanctions/activity/counterparties/tokens/recent tx with 20 etherscan tx links + 25 address links, history reopen works, PDF download works, quick sender/recipient buttons fill address + label and scan works. All core requirements pass; remaining items are accuracy/design issues.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/forensics/scan (forensics.analyse tokens)", "issue": "'Holdings' are computed as net of token transfers, not real token balances. For capped wallets this gives nonsense values (e.g. USDC net -2,194, '$ USDCFree.com - Visit to claim' net -536,320, MISTRAL AI net 48,110,850,768,482,940). Spam/airdrop phishing tokens are not filtered and rank first. The request asked for 'balance and holdings', and what is shown is misleading."},
+      {"endpoint": "forensics.MAX_TX / history_capped", "issue": "offset=10000 is requested, but Etherscan returned exactly 1000 records per category for 0xab5801 (normal/internal/token = 1000/1000/1000). history_capped uses >=1000, so the warning shows, but MAX_TX=10000 is misleading, and totals (eth_in 65,512 ETH) cover only the capped window."},
+      {"endpoint": "forensics.load_ofac", "issue": "If the GitHub OFAC download fails on a cold start, _ofac['set'] is empty and every wallet is reported 'not on the OFAC sanctions list' (list_size 0) with no error. The scan should fail or flag 'sanctions screening unavailable' when list_size == 0."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Forensics StatusPill tones", "issue": "The tone() regex in common.jsx has no match for 'Severe risk', 'High risk', 'Low risk' or 'OFAC sanctioned', so these pills are neutral grey. A Severe band and an OFAC-sanctioned counterparty should be red and Low should be green. The BAND map in Forensics.jsx is defined but never used for the tone.", "selector": "[data-testid='forensic-risk'] pill, forensic-history items, counterparty Flags", "priority": "MEDIUM"},
+      {"component": "Counterparty flags", "issue": "Mixer flags are shown as 'Rejected: Tornado Cash: Proxy'. 'Rejected:' is a hack to get a red colour and is semantically wrong. The pill should say e.g. 'Mixer: Tornado Cash: Proxy' and use a proper red tone.", "selector": "[data-testid='forensic-counterparties']", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Forensics > Token activity", "issues": ["Very large net values wrap onto two lines in the 340px column (e.g. 'net 48,110,850,768,48 / 2,940')", "Spam token names dominate the list"]},
+      {"screen": "Forensic PDF", "issues": ["Long addresses break mid-string across lines in the mixer exposure and counterparties tables (e.g. '0x905b63...ec760' / '1')"]},
+      {"screen": "App shell", "issues": ["The sidebar 'DEMO' badge next to ESCROW is still visible on the Forensics page, which is meant to be live data only (the report itself has no demo labels)."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_forensics.py", "/app/test_reports/pytest/forensics.xml"],
+  "action_items": [
+    "Add tone mappings for Severe/High (red), Medium (amber), Low (green) and 'OFAC sanctioned' (red) in StatusPill, or pass the BAND-mapped status. Replace the 'Rejected:' prefix on mixer flags.",
+    "Show real token holdings (e.g. account/tokenbalance per contract for the top tokens) or relabel the section as 'Token transfer activity (net of fetched transfers)'. Filter or flag spam tokens (names containing URLs or 'claim').",
+    "Fail or flag the scan when the OFAC list could not be loaded (list_size == 0) instead of silently reporting 'not on the OFAC list'.",
+    "Set MAX_TX to the effective provider cap (1000) or paginate, so history_capped is accurate.",
+    "Optional: wrap open(id) in Forensics.jsx in try/catch with an error toast (currently an unhandled promise rejection on failure)."
+  ],
+  "critical_code_review_comments": [
+    "forensics.load_ofac swallows HTTP errors and returns an empty set, so sanctions screening silently passes.",
+    "Forensics.jsx open() has no error handling; loadHistory has no catch.",
+    "Token net is computed from capped transfer windows, so it is not a holdings figure.",
+    "Counterparty sort key mixes ETH amounts and interaction counts (interactions/1000). Acceptable, but non-obvious.",
+    "Lazarus entries other than the Ronin exploiter (0x098b716b...) should be sourced or cited; unverified attribution in a due-diligence PDF is a liability."
+  ],
+  "updated_files": ["/app/backend/tests/test_forensics.py"],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% of requested flows (design issues noted)"},
+  "seed_data_creation": "Created 3 forensic scans (ids 49107a54..., 2d9de2bf..., 8b149aeb...) and deleted them by id. I did NOT run deleteMany({}) as requested, because unfiltered deletes violate the test data rules. 2 pre-existing scans (0xd8da6bf2... and the Tornado scan, created 08:17 by the main agent) remain in test_database.forensic_scans. Activity log entries 'Forensic scan' from my 3 scans remain.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run backend tests with -n 0 (module fixtures perform live scans; xdist would duplicate them). The test file performs 2 live Etherscan scans and writes /tmp/forensic_ids.txt for cleanup by id. DB name is test_database. The deal wallets are sender 0x48b9...5a28 and recipient 0xafadb1fa859a7a86725a6bbb5fb4f8cffa902f9f (no on-chain history, so 10/100 Low). The system date is Nov 2026."
+}

@@ -22,6 +22,8 @@ Administrator (escrow agent), Sender (Demo Investment Entity), Recipient (Demo A
 - Owner admin account (hubertfranklin1@gmail.com) not shown on login page
 - Tested: iteration_1 — backend 100%, frontend 100%; minor issues fixed after
 
+- v3 Forensics (2026-11-07): live on-chain wallet analysis via Etherscan API V2 (ETHERSCAN_API_KEY) — balance, token holdings (spam filtered, live balances for top tokens), transaction history, top counterparties, OFAC ETH address screening (0xB10C list mirror of OFAC SDN), mixer/Lazarus exposure, risk score; saved scans per user; PDF "On-Chain Forensic Analysis — Wallet Due-Diligence Report" (no demo watermark; footer states automated screening, not a certification). Tested iteration_3: backend 16/16, frontend pass. Licensed AML provider (Chainalysis/Elliptic) NOT built — needs a paid account.
+
 ## Backlog
 - P1: Multiple sender/recipient demo accounts per transaction
 - P2: CSV export of audit logs; per-transaction fee overrides

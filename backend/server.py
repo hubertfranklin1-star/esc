@@ -770,8 +770,8 @@ async def forensic_pdf(scan_id: str, user: dict = Depends(current_user)):
         ("Top counterparties", [("Address", "Received ETH", "Sent ETH", "Interactions", "Flags")] + [
             (c["address"], f"{c['received_eth']:,.4f}", f"{c['sent_eth']:,.4f}", c["interactions"],
              ", ".join(x for x in ["OFAC" if c["sanctioned"] else "", c["service"] or ""] if x) or "—") for c in r["counterparties"][:15]]),
-        ("Token activity", [("Token", "Received", "Sent", "Net", "Transfers")] + [
-            (f"{t['symbol']} ({t['contract'][:10]}…)", f"{t['received']:,.4f}", f"{t['sent']:,.4f}", f"{t['net']:,.4f}", t["transfers"]) for t in r["tokens"][:15]]),
+        ("Token holdings", [("Token", "Current balance", "Received", "Sent", "Transfers")] + [
+            (f"{t['symbol']} ({t['contract'][:10]}…)", f"{t['balance']:,.4f}" if t.get("balance") is not None else "—", f"{t['received']:,.4f}", f"{t['sent']:,.4f}", t["transfers"]) for t in r["tokens"][:15]]),
         ("Recent transactions", [("Hash", "Time (UTC)", "Value ETH", "Status")] + [
             (t["hash"], t["time"][:19].replace("T", " "), f"{t['value_eth']:,.6f}", t["status"]) for t in r["recent_transactions"][:15]]),
         ("Method", [("Data source", r["data_source"]), ("Generated", r["generated_at"]), ("Requested by", doc["created_by"]),

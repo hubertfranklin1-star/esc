@@ -11,7 +11,6 @@ import { dt, short } from "@/lib/fmt";
 
 const n = (v, d = 4) => Number(v || 0).toLocaleString("en-US", { maximumFractionDigits: d });
 const scanLink = (a) => `https://etherscan.io/address/${a}`;
-const BAND = { Low: "Approved", Medium: "Under Review", High: "More Info Needed", Severe: "Rejected" };
 
 const Risk = ({ r }) => (
   <Panel title="Risk assessment" testid="forensic-risk" actions={<StatusPill status={`${r.risk.band} risk`} />}>
@@ -66,7 +65,7 @@ const Counterparties = ({ r }) => (
                 <TableCell className="font-mono text-xs">{n(c.received_eth)}</TableCell>
                 <TableCell className="font-mono text-xs">{n(c.sent_eth)}</TableCell>
                 <TableCell className="font-mono text-xs">{c.interactions}</TableCell>
-                <TableCell className="text-xs">{c.sanctioned && <StatusPill status="OFAC sanctioned" />} {c.service && <StatusPill status={`Rejected: ${c.service}`} />}{!c.sanctioned && !c.service && <span className="text-slate-500">—</span>}</TableCell>
+                <TableCell className="text-xs">{c.sanctioned && <StatusPill status="OFAC sanctioned" />} {c.service && <StatusPill status={`Mixer: ${c.service}`} />}{!c.sanctioned && !c.service && <span className="text-slate-500">—</span>}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -77,10 +76,11 @@ const Counterparties = ({ r }) => (
 );
 
 const Tokens = ({ r }) => (
-  <Panel title="Token activity" testid="forensic-tokens">
-    {r.tokens.length === 0 ? <Empty>No token transfers.</Empty> : r.tokens.slice(0, 12).map((t) => (
-      <KV key={t.contract} label={`${t.symbol || "?"} · ${t.transfers} transfers`} value={`net ${n(t.net)}`} mono />
+  <Panel title="Token holdings" testid="forensic-tokens">
+    {r.tokens.length === 0 ? <Empty>No token activity.</Empty> : r.tokens.slice(0, 12).map((t) => (
+      <KV key={t.contract} label={`${t.symbol || "?"} · ${t.transfers} transfers`} value={t.balance == null ? "—" : n(t.balance, 2)} mono />
     ))}
+    <p className="mt-2 text-[11px] text-slate-500">Current balance shown for the most active tokens. Spam and airdrop-scam tokens are filtered out.</p>
   </Panel>
 );
 
@@ -175,7 +175,7 @@ export default function Forensics() {
         {history.length === 0 ? <Empty>No analyses yet.</Empty> : history.map((h) => (
           <button key={h.id} data-testid={`forensic-history-${h.id}`} onClick={() => open(h.id)} className="flex w-full items-center justify-between gap-3 border-b border-[#26354D]/60 py-2.5 text-left last:border-0 hover:bg-[#182235]/50">
             <div className="min-w-0"><div className="truncate font-mono text-xs text-white">{h.address}</div><div className="text-[11px] text-slate-500">{h.label || "—"} · {dt(h.created_at)}</div></div>
-            <div className="flex shrink-0 items-center gap-2"><span className="font-mono text-xs text-slate-300">{n(h.balance_eth, 2)} ETH</span><StatusPill status={BAND[h.risk.band] ? `${h.risk.band} risk` : h.risk.band} /></div>
+            <div className="flex shrink-0 items-center gap-2"><span className="font-mono text-xs text-slate-300">{n(h.balance_eth, 2)} ETH</span><StatusPill status={`${h.risk.band} risk`} /></div>
           </button>
         ))}
       </Panel>
