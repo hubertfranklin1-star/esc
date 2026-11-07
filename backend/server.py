@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hmac
 import logging
 import os
 import re
@@ -48,6 +49,7 @@ INDEXES = {
     "audit_logs": [IndexModel([("transaction_id", ASCENDING)], name="tx"), IndexModel([("timestamp", DESCENDING)], name="ts")],
     "notifications": [IndexModel([("user_id", ASCENDING), ("created_at", DESCENDING)], name="user_ts")],
     "uploaded_reports": [IndexModel([("id", ASCENDING)], name="id", unique=True), IndexModel([("transaction_id", ASCENDING)], name="tx")],
+    "cron_runs": [IndexModel([("id", ASCENDING)], name="id", unique=True), IndexModel([("at", ASCENDING)], name="ttl", expireAfterSeconds=86400)],
 }
 
 ETH_PRICE = 2350.0
@@ -369,7 +371,7 @@ async def new_transaction(reference: str, usd_value: float, sender_name: str, re
 def invite_html(tx: dict, p: str) -> str:
     link = os.environ["APP_URL"].rstrip("/") + "/login?" + urlencode({"email": tx["invite_emails"][p]})
     rules = ["Each party pays a one-time onboarding fee to open their escrow account.",
-             f"The sender deposits {eth(tx['eth_quantity'])} into the escrow wallet; the transaction is checked on Etherscan.",
+             f"The sender deposits {eth(tx['eth_quantity'])} into the escrow wallet; the transaction is checked on-chain.",
              "The deposit is AML-screened on-chain and the AML report is shared with both parties.",
              "The recipient requests the funds; the escrow fees are then split 50/50 and each party pays their half in ETH.",
              "The admin then releases the ETH to the recipient's wallet."]
@@ -435,6 +437,78 @@ async def send_invitations(tx_id: str, body: InviteEmailsIn, user: dict = Depend
     return present(await load_tx(tx_id, user))
 
 
+# ---------- ETH price: saved every 5 minutes from free public sources ----------
+PRICE_REFRESH_SECONDS = 300
+price_tasks: set = set()
+
+
+def price_age(doc: dict) -> float:
+    return (datetime.now(timezone.utc) - datetime.fromisoformat(doc["fetched_at"])).total_seconds()
+
+
+async def refresh_eth_price(min_gap: int = 60) -> Optional[dict]:
+    doc = await db.settings.find_one({"key": "eth_price"}, {"_id": 0})
+    if doc and doc.get("usd") and doc.get("fetched_at") and price_age(doc) < min_gap:
+        return doc  # just refreshed (the 5- and 15-minute schedules overlap)
+    try:
+        usd, source = await forensics.eth_price()
+    except Exception as e:
+        logger.warning("ETH price refresh failed, keeping the saved price: %s", e)
+        await db.settings.update_one({"key": "eth_price"}, {"$set": {"last_error": str(e)[:200], "last_error_at": now()}}, upsert=True)
+        return None
+    fresh = {"usd": round(usd, 2), "source": source, "fetched_at": now(), "last_error": None}
+    await db.settings.update_one({"key": "eth_price"}, {"$set": fresh}, upsert=True)
+    return fresh
+
+
+def refresh_price_soon():
+    if not price_tasks:
+        t = asyncio.create_task(refresh_eth_price())
+        price_tasks.add(t)
+        t.add_done_callback(price_tasks.discard)
+
+
+async def saved_eth_price() -> dict:
+    """The ETH price the app uses: the copy saved by the 5-minute schedule, whether the price services are up or down."""
+    doc = await db.settings.find_one({"key": "eth_price"}, {"_id": 0})
+    if doc and doc.get("usd") and doc.get("fetched_at"):
+        if price_age(doc) > PRICE_REFRESH_SECONDS:
+            refresh_price_soon()  # catches up where the schedule runs less often; this request still uses the saved price
+        return doc
+    doc = await refresh_eth_price(min_gap=0)  # nothing saved yet (very first start)
+    if not doc:
+        raise HTTPException(503, "The ETH price hasn't been saved yet — try again in a minute")
+    return doc
+
+
+@api.get("/eth-price")
+async def get_eth_price(user: dict = Depends(current_user)):
+    doc = await saved_eth_price()
+    return {"usd": doc["usd"], "source": doc["source"], "fetched_at": doc["fetched_at"], "refresh_minutes": PRICE_REFRESH_SECONDS // 60}
+
+
+@api.post("/cron/eth-price")
+async def cron_eth_price(request: Request):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    auth = request.headers.get("authorization", "")
+    if not secret or not auth.startswith("Bearer ") or not hmac.compare_digest(auth[7:].encode(), secret.encode()):
+        raise HTTPException(401, "Unauthorized")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid request body")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Invalid request body")
+    run_id = str(request.headers.get("x-webhook-id") or body.get("run_id") or new_id())
+    try:
+        await db.cron_runs.insert_one({"id": run_id, "job": "eth-price", "at": datetime.now(timezone.utc)})
+    except DuplicateKeyError:
+        return {"ok": True, "duplicate": True}
+    refresh_price_soon()
+    return {"ok": True}
+
+
 # ---------- transactions ----------
 class TxCreate(BaseModel):
     usd_value: float
@@ -457,11 +531,9 @@ async def create_transaction(body: TxCreate, user: dict = Depends(admin_user)):
         raise HTTPException(400, "Value and party names are required")
     emails = {"sender": body.sender_email.strip().lower(), "recipient": body.recipient_email.strip().lower()}
     links = await invite_links(None, emails)
-    try:
-        price = await forensics.eth_price()
-    except Exception as e:
-        logger.error("eth price failed: %s", e)
-        raise HTTPException(503, "Couldn't get the live ETH price — try again in a minute")
+    p = await saved_eth_price()
+    price = p["usd"]
+    links.update({"eth_price_source": p["source"], "eth_price_at": p["fetched_at"]})
     n = await db.transactions.count_documents({}) + 1
     ref = f"VB-ETH-2026-{n:03d}"
     while await db.transactions.find_one({"reference": ref}):
@@ -608,11 +680,8 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
         need(party == "recipient", "Only the recipient can request the funds")
         need(step == 8, "Funds cannot be requested yet")
         need(bool(await fee_wallet()), "The admin hasn't set the payment wallet yet")
-        try:
-            price = await forensics.eth_price()
-        except Exception as e:
-            logger.error("eth price failed: %s", e)
-            raise HTTPException(503, "Couldn't get the live ETH price — try again in a minute")
+        saved = await saved_eth_price()
+        price = saved["usd"]
         fees = [f for f in (await db.settings.find_one({"key": "fees"}))["items"] if f["code"] in ENGAGEMENT_ITEMS]
         half_usd = sum(f["amount"] for f in fees) / 2
         share = {}
@@ -621,7 +690,7 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
             inv = await make_invoice(tx, p, lines, "engagement", currency="ETH", extra={"usd_amount": half_usd, "eth_price": price})
             share[p] = {"invoice_id": inv["id"], "usd_amount": half_usd, "eth_amount": inv["amount"], "submitted_at": None, "confirmed_at": None}
         sets["settlement_fees"] = share
-        sets["settlement_fee_price"] = {"eth_usd": price, "priced_at": now()}
+        sets["settlement_fee_price"] = {"eth_usd": price, "priced_at": now(), "price_saved_at": saved["fetched_at"], "source": saved["source"]}
         sets["settlement"] = {"status": "requested", "requested_at": now(), "requested_by": user["email"], "release_eth": tx["eth_quantity"]}
         await notify(tx, ["admin", "sender", "recipient"], "Escrow fees due — 50/50 split",
                      f"{tx['reference']}: the recipient requested the funds. Each party now pays {money(half_usd)} ({eth(share['sender']['eth_amount'])} at {money(price)}/ETH).")
@@ -831,7 +900,7 @@ async def chain_check(h: str, to: str, amount: float, not_before: str, what: str
         raise HTTPException(400, str(e))
     except Exception as e:
         logger.error("payment verification failed: %s", e)
-        raise HTTPException(503, "Couldn't reach Etherscan to check the payment — try again shortly")
+        raise HTTPException(503, "Couldn't reach the Ethereum network to check the payment — try again shortly")
 
 
 def others(inv: dict) -> List[str]:
@@ -921,7 +990,7 @@ def report_sections(kind: str, tx: dict) -> list:
     dep, st, an = tx["deposit"], tx["settlement"], tx["analysis"]
     dep_rows = [("From wallet", dep.get("from_address")), ("Escrow wallet", dep.get("to_address")),
                 ("Transaction hash", dep.get("tx_hash")), ("Block number", dep.get("block_number")),
-                ("Verified", "On-chain via Etherscan" if dep.get("verified_onchain") else "Confirmed by admin" if dep.get("confirmed_at") else "Pending"),
+                ("Verified", "On-chain (public Ethereum data)" if dep.get("verified_onchain") else "Confirmed by admin" if dep.get("confirmed_at") else "Pending"),
                 ("Time", dep.get("initiated_at"))]
     sf = tx.get("settlement_fees") or {}
     fee_rows = [(f"{p.capitalize()} 50% fee share", f"{eth(sf[p]['eth_amount'])} ({money(sf[p]['usd_amount'])}) — "
@@ -1257,6 +1326,7 @@ async def startup():
     await seed_data(first_run)
     if first_run:
         await db.settings.update_one({"key": "seeded"}, {"$set": {"at": now()}}, upsert=True)
+    refresh_price_soon()  # make sure a recent ETH price is saved straight after a restart
     app.state.index_task = asyncio.create_task(ensure_indexes())
 
 

@@ -12,9 +12,11 @@ import { useTx } from "@/context/TxContext";
 import { useAuth } from "@/context/AuthContext";
 import { api, errMsg } from "@/lib/api";
 import { usd, ethFmt, dt } from "@/lib/fmt";
+import { useEthPrice, savedAt } from "@/lib/useEthPrice";
 
 const CreateDialog = ({ open, onOpenChange }) => {
   const { loadList, select } = useTx();
+  const price = useEthPrice(open);
   const [f, setF] = useState({ usd_value: "250000000", sender_name: "", sender_email: "", recipient_name: "", recipient_email: "" });
   const create = async () => {
     try {
@@ -36,7 +38,7 @@ const CreateDialog = ({ open, onOpenChange }) => {
   );
   return (
     <ConfirmDialog open={open} onOpenChange={onOpenChange} testid="create-tx-dialog" title="New deal"
-      description="An invitation email with the deal details and escrow rules is sent to both parties as soon as you create the deal. ETH amount uses $2,350 per ETH." confirmLabel="Create deal & send invitations" onConfirm={create}>
+      description={`An invitation email with the deal details and escrow rules is sent to both parties as soon as you create the deal. ETH amount uses the saved ETH price${price ? `: ${usd(price.usd, 2)} (saved ${savedAt(price.fetched_at)}, updated every ${price.refresh_minutes} minutes)` : ""}.`} confirmLabel="Create deal & send invitations" onConfirm={create}>
       <div className="space-y-3">
         {field("usd_value", "Deal value (USD)", "number")}
         <div className="grid gap-3 sm:grid-cols-2">

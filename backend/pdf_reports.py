@@ -51,7 +51,7 @@ def _forensic_page(canvas, doc):
     canvas.drawString(18 * mm, h - 17 * mm, "On-Chain Forensic Analysis & Wallet Due-Diligence")
     canvas.setFillColor(colors.HexColor("#64748B"))
     canvas.setFont("Helvetica", 6.5)
-    canvas.drawCentredString(w / 2, 10 * mm, "Generated from live Ethereum data (Etherscan API V2) and the OFAC SDN digital currency address list. "
+    canvas.drawCentredString(w / 2, 10 * mm, "Generated from live public Ethereum data (public explorer APIs and Ethereum nodes) and the OFAC SDN digital currency address list. "
                              "Automated screening; not a legal opinion or regulatory certification.")
     canvas.drawRightString(w - 18 * mm, 5 * mm, f"Page {doc.page}")
     canvas.restoreState()

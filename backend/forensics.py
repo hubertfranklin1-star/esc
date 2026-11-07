@@ -1,21 +1,33 @@
 import asyncio
 import logging
-import os
 import re
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import httpx
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
-BASE = "https://api.etherscan.io/v2/api"
+# Free public data sources — no API key needed. Each list is tried in order until one answers.
+EXPLORERS = [  # Etherscan-compatible block explorer APIs (address history, token transfers)
+    ("Routescan", "https://api.routescan.io/v2/network/mainnet/evm/1/etherscan/api"),
+    ("Blockscout", "https://eth.blockscout.com/api"),
+]
+ROUTESCAN = EXPLORERS[0][1]
+RPC_NODES = ["https://eth.drpc.org", "https://ethereum-rpc.publicnode.com"]  # public Ethereum JSON-RPC nodes
+PRICE_SOURCES = [
+    ("Coinbase", "https://api.coinbase.com/v2/prices/ETH-USD/spot", lambda b: b["data"]["amount"]),
+    ("Kraken", "https://api.kraken.com/0/public/Ticker?pair=ETHUSD", lambda b: next(iter(b["result"].values()))["c"][0]),
+    ("Routescan", f"{ROUTESCAN}?module=stats&action=ethprice", lambda b: b["result"]["ethusd"]),
+    ("Blockscout", "https://eth.blockscout.com/api?module=stats&action=ethprice", lambda b: b["result"]["ethusd"]),
+    ("CoinGecko", "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd", lambda b: b["ethereum"]["usd"]),
+]
 OFAC_URL = "https://raw.githubusercontent.com/0xB10C/ofac-sanctioned-digital-currency-addresses/lists/sanctioned_addresses_ETH.txt"
 ADDR = re.compile(r"^0x[a-fA-F0-9]{40}$")
 WEI = Decimal(10) ** 18
-MAX_TX = 1000
+MAX_TX = 500  # most recent records per category: the largest page the free explorer APIs serve
 SPAM = re.compile(r"(https?://|www\.|\.com|\.io|\.org|\.xyz|visit|claim|reward|airdrop|\$)", re.I)
 
 RISKY_SERVICES = {
@@ -39,49 +51,120 @@ RISKY_SERVICES = {
 }
 
 _ofac: Dict[str, object] = {"set": set(), "loaded_at": 0.0, "source": OFAC_URL}
-_gate = asyncio.Lock()
-_last_call = [0.0]
+_gates: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+_last_call: Dict[str, float] = defaultdict(float)
+SPACING = {"explorer": 0.6, "rpc": 0.1}  # stay well inside the free-tier request limits
+
+
+class Unavailable(RuntimeError):
+    """No public data source answered — the caller should ask the user to try again shortly."""
 
 
 def valid(address: str) -> bool:
     return bool(ADDR.fullmatch(address or ""))
 
 
-async def _throttle():
-    async with _gate:
-        wait = 0.36 - (time.monotonic() - _last_call[0])
+def _int(v) -> int:
+    if isinstance(v, str) and v.lower().startswith("0x"):
+        return int(v, 16) if len(v) > 2 else 0
+    return int(v or 0)
+
+
+async def _throttle(kind: str):
+    async with _gates[kind]:
+        wait = SPACING[kind] - (time.monotonic() - _last_call[kind])
         if wait > 0:
             await asyncio.sleep(wait)
-        _last_call[0] = time.monotonic()
+        _last_call[kind] = time.monotonic()
 
 
-async def _call(http: httpx.AsyncClient, module: str, action: str, **params):
-    q = {"chainid": "1", "module": module, "action": action, "apikey": os.environ["ETHERSCAN_API_KEY"], **params}
-    for attempt in range(3):
-        await _throttle()
-        r = await http.get(BASE, params=q)
+def _busy(text: str) -> bool:
+    t = text.lower()
+    return any(s in t for s in ("too many", "rate limit", "max calls", "error occurred"))
+
+
+async def _explorer(http: httpx.AsyncClient, module: str, action: str, used: Optional[set] = None, **params):
+    """Etherscan-style query against the free explorer APIs (Routescan, then Blockscout)."""
+    errors = []
+    for name, base in EXPLORERS:
+        tries = 5 if name == "Routescan" else 3  # Routescan's free tier randomly answers "An error occurred"; a retry fixes it
+        for attempt in range(tries):
+            await _throttle("explorer")
+            q = {"module": module, "action": action, **params}
+            if attempt and name == "Routescan":
+                q["cb"] = f"{time.time_ns() % 10**9}"  # its CDN caches error replies per URL: vary the URL so a retry is a fresh request
+            try:
+                r = await http.get(base, params=q)
+                if r.status_code == 429:
+                    raise httpx.HTTPStatusError("rate limited", request=r.request, response=r)
+                r.raise_for_status()
+                body = r.json()
+            except (httpx.HTTPError, ValueError) as e:
+                if attempt < tries - 1:
+                    await asyncio.sleep(1 + attempt)
+                    continue
+                errors.append(f"{name}: {type(e).__name__}")
+                break
+            status, res, msg = str(body.get("status")), body.get("result"), str(body.get("message") or "")
+            if status in ("1", "2") and res is not None:  # "2" = partial (some internal txs still being indexed)
+                if used is not None:
+                    used.add(name)
+                return res
+            if status == "0" and isinstance(res, list) and not res and "found" in msg.lower():
+                if used is not None:
+                    used.add(name)
+                return []  # "No transactions found" and similar
+            text = f"{msg} {res if isinstance(res, str) else ''}".strip()
+            if attempt < tries - 1 and _busy(text):
+                await asyncio.sleep(min(1.2 * (attempt + 1), 4))
+                continue
+            errors.append(f"{name}: {text[:80]}")
+            break
+    raise Unavailable("public blockchain data is unavailable right now (" + "; ".join(errors) + ")")
+
+
+def _proxy(http: httpx.AsyncClient, action: str, **params) -> Callable:
+    """Fallback: the same JSON-RPC call served by Routescan's explorer API."""
+    async def run():
+        await _throttle("explorer")
+        r = await http.get(ROUTESCAN, params={"module": "proxy", "action": action, "cb": f"{time.time_ns() % 10**9}", **params})
         r.raise_for_status()
         body = r.json()
-        if module == "proxy":
-            res = body.get("result")
-            if isinstance(res, str) and "rate limit" in res.lower() and attempt < 2:
-                await asyncio.sleep(1.2)
-                continue
-            if isinstance(res, str) and not res.startswith("0x"):
-                raise RuntimeError(f"Etherscan: {res}")
-            return res
-        if body.get("status") == "1":
-            return body["result"]
-        msg = str(body.get("result") or body.get("message") or "")
-        if "rate limit" in msg.lower() and attempt < 2:
-            await asyncio.sleep(1.2)
+        if body.get("error") or "jsonrpc" not in body:
+            raise RuntimeError(str((body.get("error") or {}).get("message") or body.get("result") or body.get("message"))[:80])
+        return body.get("result")
+    return run
+
+
+async def _rpc(http: httpx.AsyncClient, method: str, params: list, fallback: Optional[Callable] = None):
+    """Ask the public Ethereum nodes in turn. Returns None only when every source answered and none had the item."""
+    errors = []
+    for url in RPC_NODES:
+        host = url.split("//")[1]
+        await _throttle("rpc")
+        try:
+            r = await http.post(url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+            r.raise_for_status()
+            body = r.json()
+        except (httpx.HTTPError, ValueError) as e:
+            errors.append(f"{host}: {type(e).__name__}")
             continue
-        if "no transactions" in msg.lower() or body.get("message") == "No transactions found":
-            return []
-        if action in ("addresstokenbalance", "getaddresstag"):
-            return []
-        raise RuntimeError(f"Etherscan: {msg}")
-    return []
+        if body.get("error"):
+            errors.append(f"{host}: {str(body['error'].get('message'))[:60]}")
+            continue
+        if body.get("result") is not None:
+            return body["result"]
+        # null: this node may simply have pruned it, so ask the next source before concluding it doesn't exist
+    if fallback:
+        try:
+            res = await fallback()
+            if res is not None:
+                return res
+        except Exception as e:
+            errors.append(f"explorer: {str(e)[:60]}")
+    if errors:
+        raise Unavailable("public Ethereum nodes are unavailable right now (" + "; ".join(errors) + ")")
+    return None
 
 
 TX_HASH = re.compile(r"^0x[0-9a-fA-F]{64}$")
@@ -89,30 +172,45 @@ TX_HASH = re.compile(r"^0x[0-9a-fA-F]{64}$")
 
 async def verify_payment(tx_hash: str, to_addr: str, min_eth: float, not_before: datetime, what: str = "fee") -> dict:
     async with httpx.AsyncClient(timeout=20) as http:
-        t = await _call(http, "proxy", "eth_getTransactionByHash", txhash=tx_hash)
+        t = await _rpc(http, "eth_getTransactionByHash", [tx_hash], _proxy(http, "eth_getTransactionByHash", txhash=tx_hash))
         if not isinstance(t, dict):
             raise ValueError("Transaction not found on Ethereum mainnet")
         if (t.get("to") or "").lower() != to_addr.lower():
             raise ValueError(f"This transaction was not sent to {to_addr}")
-        value = int(t["value"], 16) / 1e18
+        value = _int(t["value"]) / 1e18
         if value + 1e-9 < min_eth:
             raise ValueError(f"This transaction sent {value:.4f} ETH; the {what} is {min_eth:g} ETH")
         if not t.get("blockNumber"):
             raise ValueError("The transaction is still pending — try again once it's mined")
-        rc = await _call(http, "proxy", "eth_getTransactionReceipt", txhash=tx_hash)
-        if not isinstance(rc, dict) or rc.get("status") != "0x1":
+        rc = await _rpc(http, "eth_getTransactionReceipt", [tx_hash], _proxy(http, "eth_getTransactionReceipt", txhash=tx_hash))
+        if not isinstance(rc, dict):
+            raise Unavailable("couldn't read the transaction receipt")
+        if rc.get("status") != "0x1":
             raise ValueError("This transaction failed on-chain")
-        blk = await _call(http, "proxy", "eth_getBlockByNumber", tag=t["blockNumber"], boolean="false")
-        mined = datetime.fromtimestamp(int(blk["timestamp"], 16), timezone.utc)
+        blk = await _rpc(http, "eth_getBlockByNumber", [t["blockNumber"], False], _proxy(http, "eth_getBlockByNumber", tag=t["blockNumber"], boolean="false"))
+        if not isinstance(blk, dict):
+            raise Unavailable("couldn't read the block")
+        mined = datetime.fromtimestamp(_int(blk["timestamp"]), timezone.utc)
         if mined < not_before:
             raise ValueError("This transaction was sent before this payment was requested — send a new payment and paste its hash")
-    return {"from": t["from"], "value_eth": value, "block": int(t["blockNumber"], 16), "mined_at": mined.isoformat()}
+    return {"from": t["from"], "value_eth": value, "block": _int(t["blockNumber"]), "mined_at": mined.isoformat()}
 
 
-async def eth_price() -> float:
-    async with httpx.AsyncClient(timeout=15) as http:
-        r = await _call(http, "stats", "ethprice")
-    return float(r["ethusd"])
+async def eth_price() -> Tuple[float, str]:
+    """Live ETH/USD from the first free public price source that answers. Returns (price, source)."""
+    errors = []
+    async with httpx.AsyncClient(timeout=8) as http:
+        for name, url, pick in PRICE_SOURCES:
+            try:
+                r = await http.get(url)
+                r.raise_for_status()
+                v = float(pick(r.json()))
+                if v > 0:
+                    return v, name
+                errors.append(f"{name}: no price")
+            except Exception as e:
+                errors.append(f"{name}: {type(e).__name__}")
+    raise Unavailable("no public ETH price source answered (" + ", ".join(errors) + ")")
 
 
 async def load_ofac(http: httpx.AsyncClient) -> set:
@@ -132,7 +230,7 @@ async def load_ofac(http: httpx.AsyncClient) -> set:
 
 
 def _eth(wei) -> float:
-    return float(Decimal(int(wei or 0)) / WEI)
+    return float(Decimal(_int(wei)) / WEI)
 
 
 def _iso(ts) -> Optional[str]:
@@ -163,14 +261,16 @@ def _flows(address: str, txs: List[dict], value_key=lambda t: _eth(t.get("value"
 
 async def analyse(address: str) -> dict:
     address = address.lower()
+    used: set = set()
     async with httpx.AsyncClient(timeout=30) as http:
         sanctioned = await load_ofac(http)
-        balance = await _call(http, "account", "balance", address=address, tag="latest")
+        balance = await _rpc(http, "eth_getBalance", [address, "latest"],
+                             lambda: _explorer(http, "account", "balance", used, address=address, tag="latest"))
         common = dict(address=address, startblock=0, endblock=99999999, page=1, offset=MAX_TX, sort="desc")
-        normal = await _call(http, "account", "txlist", **common)
-        internal = await _call(http, "account", "txlistinternal", **common)
-        tokens = await _call(http, "account", "tokentx", **common)
-        code = await _call(http, "proxy", "eth_getCode", address=address, tag="latest")
+        normal = await _explorer(http, "account", "txlist", used, **common)
+        internal = await _explorer(http, "account", "txlistinternal", used, **common)
+        tokens = await _explorer(http, "account", "tokentx", used, **common)
+        code = await _rpc(http, "eth_getCode", [address, "latest"], _proxy(http, "eth_getCode", address=address, tag="latest"))
 
     n_in_eth, n_out_eth, n_in, n_out, parties = _flows(address, normal)
     i_in, i_out, _, _, iparties = _flows(address, internal)
@@ -200,8 +300,10 @@ async def analyse(address: str) -> dict:
     async with httpx.AsyncClient(timeout=30) as http:
         for h in holdings[:6]:
             try:
-                raw = await _call(http, "account", "tokenbalance", contractaddress=h["contract"], address=address, tag="latest")
-                h["balance"] = float(Decimal(int(raw or 0)) / (Decimal(10) ** h["dec"]))
+                call = {"to": h["contract"], "data": "0x70a08231" + address[2:].rjust(64, "0")}  # ERC-20 balanceOf(address)
+                raw = await _rpc(http, "eth_call", [call, "latest"],
+                                 lambda c=h["contract"]: _explorer(http, "account", "tokenbalance", None, contractaddress=c, address=address, tag="latest"))
+                h["balance"] = float(Decimal(_int(raw)) / (Decimal(10) ** h["dec"]))
             except Exception:
                 pass
     for h in holdings:
@@ -250,7 +352,7 @@ async def analyse(address: str) -> dict:
             "normal_tx": len(normal), "internal_tx": len(internal), "token_transfers": len(tokens),
             "failed_tx": failed, "eth_in": round(n_in_eth + i_in, 6), "eth_out": round(n_out_eth + i_out, 6),
             "tx_in": n_in, "tx_out": n_out, "unique_counterparties": len(counterparties),
-            "history_capped": any(len(x) >= 1000 for x in (normal, internal, tokens)),
+            "history_capped": any(len(x) >= MAX_TX for x in (normal, internal, tokens)),
         },
         "tokens": holdings,
         "counterparties": counterparties[:25],
@@ -262,6 +364,6 @@ async def analyse(address: str) -> dict:
         "recent_transactions": [
             {"hash": t["hash"], "time": _iso(t["timeStamp"]), "from": t["from"], "to": t.get("to") or "(contract creation)",
              "value_eth": _eth(t.get("value")), "status": "Failed" if t.get("isError") == "1" else "Success"} for t in normal[:20]],
-        "data_source": "Etherscan API V2 (live Ethereum mainnet data)",
+        "data_source": f"Live Ethereum mainnet data from free public sources: {' & '.join(sorted(used)) or 'public'} explorer API and public Ethereum nodes",
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }

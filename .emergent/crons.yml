@@ -1,0 +1,15 @@
+crons:
+  - name: eth-price-5m
+    description: "Saves the ETH price every 5 minutes; deals and escrow fees are priced from it"
+    cron: "*/5 * * * *"
+    endpoint: "{{BASE_URL}}/api/cron/eth-price"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true
+  - name: eth-price-15m
+    description: "Saves the ETH price every 15 minutes on the live site, where 5-minute schedules don't run"
+    cron: "*/15 * * * *"
+    endpoint: "{{BASE_URL}}/api/cron/eth-price"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

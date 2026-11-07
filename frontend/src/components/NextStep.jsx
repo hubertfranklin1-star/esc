@@ -101,7 +101,7 @@ const PayBox = ({ amount, wallet, onPay, manualLabel, prefix = "fee" }) => {
       <div className="space-y-1.5">
         <Label>Transaction hash</Label>
         <Input data-testid={`${prefix}-tx-hash-input`} value={hash} onChange={(e) => setHash(e.target.value.trim())} placeholder="0x… (64 characters)" className="bg-[#0B111E] font-mono text-xs" />
-        <p className="text-[11px] text-slate-500">Paste it after sending; we check it on Etherscan and mark it paid straight away.</p>
+        <p className="text-[11px] text-slate-500">Paste it after sending; we check it on the Ethereum network and mark it paid straight away.</p>
       </div>
       <div className="flex flex-wrap gap-2">
         <Button data-testid={`${prefix}-verify-button`} disabled={busy || !hash} onClick={() => pay({ tx_hash: hash })}>{busy ? "Checking…" : "Verify payment"}</Button>
@@ -139,7 +139,7 @@ export const FeeSplit = ({ tx }) => {
           </div>
         </div>
       ))}
-      {pr.eth_usd && <p className="mt-2 text-[11px] text-slate-500">Priced at {usd(pr.eth_usd, 2)} per ETH (live market price when the funds were requested).</p>}
+      {pr.eth_usd && <p className="mt-2 text-[11px] text-slate-500">Priced at {usd(pr.eth_usd, 2)} per ETH (the saved market price when the funds were requested).</p>}
     </div>
   );
 };
@@ -174,7 +174,7 @@ const PartyStep = ({ tx, party, act, refresh }) => {
     );
   if (party === "recipient" && s === 8)
     return (
-      <Card title="Request your funds" text={`The AML report has been released (see Forensics). When you request the funds, the escrow fees are split 50/50 between you and the sender at the live ETH price. Funds go to ${tx.onboarding.recipient.data.wallet_address}.`}>
+      <Card title="Request your funds" text={`The AML report has been released (see Forensics). When you request the funds, the escrow fees are split 50/50 between you and the sender at the current ETH price. Funds go to ${tx.onboarding.recipient.data.wallet_address}.`}>
         <Button data-testid="request-release-button" onClick={() => act("request_release", {}, "Funds requested — escrow fees are now due")}>Request {ethFmt(tx.eth_quantity, 2)}</Button>
       </Card>
     );
@@ -295,7 +295,7 @@ const ReleaseCard = ({ tx, act }) => {
       <div className="mb-4 space-y-1.5">
         <KV label="Recipient wallet" value={to} mono testid="release-recipient-wallet" />
         <Label>Release transaction hash (optional)</Label>
-        <Input data-testid="release-tx-hash-input" value={hash} onChange={(e) => setHash(e.target.value.trim())} placeholder="0x… checked on Etherscan if provided" className="bg-[#0B111E] font-mono text-xs" />
+        <Input data-testid="release-tx-hash-input" value={hash} onChange={(e) => setHash(e.target.value.trim())} placeholder="0x… checked on-chain if provided" className="bg-[#0B111E] font-mono text-xs" />
       </div>
       <div className="flex flex-wrap gap-2">
         <Button data-testid="release-approve-button" disabled={pending.length > 0} onClick={() => act("release", { decision: "approved", tx_hash: hash }, "Funds released — escrow closed")}>Release funds & close</Button>
