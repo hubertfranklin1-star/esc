@@ -84,9 +84,12 @@ def _assert_safe_email(subject: str, html: str) -> None:
                 raise ValueError(f"Anchor text {m.group(1)!r} differs from link host {real!r} (G3)")
 
 
+BRAND = "TSX Trust"  # sender name on every email
+
+
 async def send_email(*, to: str, subject: str, html: str):
     _assert_safe_email(subject, html)
-    payload = {"to": [to], "subject": subject, "html": html, "from_name": os.environ["EMAIL_FROM_NAME"]}
+    payload = {"to": [to], "subject": subject, "html": html, "from_name": BRAND}
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(f"{EMAIL_BASE_URL}/api/v1/email/send",

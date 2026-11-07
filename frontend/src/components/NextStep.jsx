@@ -152,7 +152,7 @@ const PartyStep = ({ tx, party, act, refresh }) => {
   const obInv = useInvoice(tx, of.invoice_id, of.submitted_at);
   const ob = tx.onboarding[party];
   if (tx.invitations[party].status === "declined") return <Card title="You declined this invitation" text="Ask the admin to re-send it if you change your mind." />;
-  if (!tx.invitations_sent_at) return <Card title="No invitation yet" text="You'll receive an invitation email from VaultBridge Escrow when the admin opens this deal." />;
+  if (!tx.invitations_sent_at) return <Card title="No invitation yet" text="You'll receive an invitation email from TSX Trust when the admin opens this deal." />;
   if (["not_started", "rejected"].includes(ob.status))
     return (
       <Card title="Join the deal" text={ob.status === "rejected" ? `The admin asked you to update your details${ob.note ? `: ${ob.note}` : "."}` : `You're invited to deal ${tx.reference}. Fill in your details to join.`}>

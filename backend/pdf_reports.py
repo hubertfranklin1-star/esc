@@ -10,7 +10,7 @@ NAVY = colors.HexColor("#0B111E")
 BLUE = colors.HexColor("#0284C7")
 GOLD = colors.HexColor("#B7791F")
 
-FOOTER = "VaultBridge Escrow demo environment — not a real financial, regulatory or blockchain record"
+FOOTER = "TSX Trust demo environment — not a real financial, regulatory or blockchain record"
 
 
 def _decorate(canvas, doc):
@@ -27,7 +27,7 @@ def _decorate(canvas, doc):
     canvas.rect(0, h - 22 * mm, w, 22 * mm, fill=1, stroke=0)
     canvas.setFillColor(colors.white)
     canvas.setFont("Helvetica-Bold", 13)
-    canvas.drawString(18 * mm, h - 12 * mm, "VAULTBRIDGE ESCROW")
+    canvas.drawString(18 * mm, h - 12 * mm, "TSX TRUST")
     canvas.setFont("Helvetica", 8)
     canvas.drawString(18 * mm, h - 17 * mm, "Digital asset escrow")
     canvas.setFillColor(colors.HexColor("#64748B"))
@@ -46,7 +46,7 @@ def _forensic_page(canvas, doc):
     canvas.rect(0, h - 22 * mm, w, 22 * mm, fill=1, stroke=0)
     canvas.setFillColor(colors.white)
     canvas.setFont("Helvetica-Bold", 13)
-    canvas.drawString(18 * mm, h - 12 * mm, "VAULTBRIDGE ESCROW")
+    canvas.drawString(18 * mm, h - 12 * mm, "TSX TRUST")
     canvas.setFont("Helvetica", 8)
     canvas.drawString(18 * mm, h - 17 * mm, "On-Chain Forensic Analysis & Wallet Due-Diligence")
     canvas.setFillColor(colors.HexColor("#64748B"))

@@ -28,11 +28,11 @@ load_dotenv(ROOT_DIR / ".env")
 try:
     from backend.pdf_reports import build_report, build_forensic_report
     from backend import forensics
-    from backend.mailer import send_email
+    from backend.mailer import send_email, BRAND
 except ModuleNotFoundError:
     from pdf_reports import build_report, build_forensic_report
     import forensics
-    from mailer import send_email
+    from mailer import send_email, BRAND
 from html import escape
 from urllib.parse import urlencode
 
@@ -386,7 +386,7 @@ def invite_html(tx: dict, p: str) -> str:
             f"<tr><td style='padding:4px 12px 4px 0;color:#64748B'>Network</td><td>{escape(tx['network'])}</td></tr></table>"
             f"<h3 style='margin:18px 0 6px'>Escrow rules</h3><ol style='padding-left:18px;font-size:14px'>{li}</ol>"
             f"<p style='margin:20px 0'><a href='{link}' style='background:#0284C7;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none'>Enter the escrow</a></p>"
-            f"<p style='font-size:12px;color:#888'>Sent by VaultBridge Escrow. Open the link and continue with this email address: if you're new you'll create your own account and password, otherwise just sign in. We will never ask you to share login or wallet secrets by email.</p>"
+            f"<p style='font-size:12px;color:#888'>Sent by {BRAND}. Open the link and continue with this email address: if you're new you'll create your own account and password, otherwise just sign in. We will never ask you to share login or wallet secrets by email.</p>"
             f"</td></tr></table>")
 
 
@@ -420,7 +420,7 @@ async def deliver_invites(tx: dict, emails: dict, user: dict):
     for p, e in emails.items():
         if joined(tx["onboarding"][p]):
             continue
-        await send_email(to=e, subject=f"Invitation to escrow deal {tx['reference']} — VaultBridge Escrow", html=invite_html(tx, p))
+        await send_email(to=e, subject=f"Invitation to escrow deal {tx['reference']} — {BRAND}", html=invite_html(tx, p))
         sent.append(p)
         await db.transactions.update_one({"id": tx["id"]}, {"$set": {"invitations_sent_at": now(), f"invitations.{p}.emailed_at": now()}})
         await notify(tx, [p], f"You're invited to escrow deal {tx['reference']}",
@@ -535,10 +535,10 @@ async def create_transaction(body: TxCreate, user: dict = Depends(admin_user)):
     price = p["usd"]
     links.update({"eth_price_source": p["source"], "eth_price_at": p["fetched_at"]})
     n = await db.transactions.count_documents({}) + 1
-    ref = f"VB-ETH-2026-{n:03d}"
+    ref = f"TSX-ETH-2026-{n:03d}"
     while await db.transactions.find_one({"reference": ref}):
         n += 1
-        ref = f"VB-ETH-2026-{n:03d}"
+        ref = f"TSX-ETH-2026-{n:03d}"
     tx = await new_transaction(ref, body.usd_value, body.sender_name.strip(), body.recipient_name.strip(), body.network, links, price)
     await log(tx, user, "Deal created", f"{ref} — deal value {money(body.usd_value)}")
     await deliver_invites(tx, emails, user)
@@ -848,7 +848,7 @@ async def make_invoice(tx: dict, party: str, fee_items: List[dict], kind: str, u
     n = await next_counter("invoice")
     lines = [{"code": f["code"], "description": f["label"], "amount": f["amount"]} for f in fee_items]
     inv = {
-        "id": new_id(), "invoice_number": f"VB-INV-2026-{n:04d}", "transaction_id": tx["id"], "reference": tx["reference"],
+        "id": new_id(), "invoice_number": f"TSX-INV-2026-{n:04d}", "transaction_id": tx["id"], "reference": tx["reference"],
         "kind": kind, "party": party,
         "responsible_name": tx[f"{party}_name"], "responsible_user_id": tx[f"{party}_user_id"],
         "items": lines, "amount": round(sum(line["amount"] for line in lines), 6), "currency": currency,
@@ -1272,7 +1272,7 @@ async def delete_account(user_id: str, admin: dict = Depends(admin_user)):
 
 # ---------- seed ----------
 DEMO_USERS = [
-    {"email": "admin@vaultbridge.demo", "password": "AdminDemo#2026", "role": "admin", "name": "Alex Morgan", "organisation": "VaultBridge Escrow"},
+    {"email": "admin@vaultbridge.demo", "password": "AdminDemo#2026", "role": "admin", "name": "Alex Morgan", "organisation": BRAND},
     {"email": "sender@vaultbridge.demo", "password": "SenderDemo#2026", "role": "sender", "name": "Jordan Hale", "organisation": "Demo Investment Entity"},
     {"email": "recipient@vaultbridge.demo", "password": "RecipientDemo#2026", "role": "recipient", "name": "Riley Chen", "organisation": "Demo Acquisition Company"},
 ]
@@ -1284,7 +1284,7 @@ async def seed_users(first_run: bool):
     users = [u for u in DEMO_USERS if u["role"] == "admin" or first_run]
     if os.environ.get("OWNER_EMAIL") and os.environ.get("OWNER_PASSWORD"):
         users.append({"email": os.environ["OWNER_EMAIL"].lower(), "password": os.environ["OWNER_PASSWORD"], "role": "admin",
-                      "name": "Platform Owner", "organisation": "VaultBridge Escrow"})
+                      "name": "Platform Owner", "organisation": BRAND})
     for u in users:
         existing = await db.users.find_one({"email": u["email"]})
         fields = {"role": u["role"], "name": u["name"], "organisation": u["organisation"]}
@@ -1300,8 +1300,8 @@ async def seed_data(first_run: bool):
     if not await db.settings.find_one({"key": "fees"}):
         await db.settings.insert_one({"key": "fees", "items": [{"code": c, "label": l, "amount": a, "party": p} for c, l, a, p in FEE_CATALOG]})
     if first_run and await db.transactions.count_documents({}) == 0:
-        tx = await new_transaction("VB-ETH-2026-001", 6_000_000_000.0, "Demo Investment Entity", "Demo Acquisition Company", "Ethereum Mainnet")
-        await log(tx, None, "Deal created", "VB-ETH-2026-001 created — waiting for the admin to send invitation emails")
+        tx = await new_transaction("TSX-ETH-2026-001", 6_000_000_000.0, "Demo Investment Entity", "Demo Acquisition Company", "Ethereum Mainnet")
+        await log(tx, None, "Deal created", "TSX-ETH-2026-001 created — waiting for the admin to send invitation emails")
 
 
 app.include_router(api)

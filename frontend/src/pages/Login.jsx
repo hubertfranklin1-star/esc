@@ -21,7 +21,7 @@ const Hero = () => (
     <div className="absolute inset-0 bg-gradient-to-t from-[#0B111E] via-[#0B111E]/70 to-[#0B111E]/30" />
     <div className="relative flex h-full flex-col justify-end p-14">
       <div className="eyebrow text-amber-300">Digital asset escrow</div>
-      <h1 className="mt-4 max-w-xl text-5xl font-bold leading-tight tracking-tight text-white">VaultBridge Escrow</h1>
+      <h1 className="mt-4 max-w-xl text-5xl font-bold leading-tight tracking-tight text-white">TSX Trust</h1>
       <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-300">
         Hold ETH safely between a sender and a recipient. Join, sign, deposit, release — in 10 simple steps.
       </p>

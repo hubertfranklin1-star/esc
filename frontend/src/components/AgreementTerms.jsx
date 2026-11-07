@@ -1,7 +1,7 @@
 import { usd, ethFmt } from "@/lib/fmt";
 
 const RULES = (tx) => [
-  ["Escrow wallet", `When both parties are approved, the escrow opens with VaultBridge's escrow wallet on ${tx.network}. All deposits and fees go to this wallet.`],
+  ["Escrow wallet", `When both parties are approved, the escrow opens with TSX Trust's escrow wallet on ${tx.network}. All deposits and fees go to this wallet.`],
   ["Onboarding fee", "Each party pays a one-time onboarding fee in ETH before the escrow opens. It covers identity, company and wallet due diligence for a high-value deal."],
   ["Deposit", `The sender deposits ${ethFmt(tx.eth_quantity, 2)} (about ${usd(tx.usd_value)}) from their registered wallet. The transaction hash is checked on-chain, or the admin confirms receipt.`],
   ["AML checks", "Every deposit is screened on-chain: the sending wallet's history, its counterparties, sanctions lists and links to mixers or high-risk services."],
