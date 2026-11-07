@@ -162,7 +162,7 @@ const ForensicDocs = ({ tx, isAdmin }) => {
         : docs.length === 0 ? <Empty testid="forensic-docs-empty">No documents uploaded yet.</Empty>
         : docs.map((u) => (
           <div key={u.id} data-testid={`forensic-doc-${u.id}`} className="flex items-center justify-between border-b border-[#26354D]/60 py-2.5 last:border-0">
-            <div><div className="text-sm text-white">{u.title}</div><div className="text-xs text-slate-500">{u.filename} · {(u.size / 1024).toFixed(1)} KB · {dt(u.uploaded_at)}</div></div>
+            <div><div className="text-sm text-white">{u.title}</div><div className="text-xs text-slate-500">{u.filename} · {u.size < 1024 ? `${u.size} B` : `${(u.size / 1024).toFixed(1)} KB`} · {dt(u.uploaded_at)}</div></div>
             <Button size="sm" variant="outline" data-testid={`forensic-doc-download-${u.id}`} onClick={() => download(`/reports/uploads/${u.id}/download`, u.filename)}><Download className="h-3.5 w-3.5" /></Button>
           </div>
         ))}

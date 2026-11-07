@@ -1,0 +1,42 @@
+{
+  "summary": "Ran the whole new 10-step invitation workflow end to end in the UI (Playwright, admin/sender/recipient). It ran on a TEST deal created via API (VB-ETH-2026-002) so the seeded VB-ETH-2026-001 was left alone. Every requested check passed. (1) Before the invitation, sender and recipient Home both show 'No invitation yet'. (2) On the admin Home, the invite form with delivered@resend.dev for both parties gave the toast 'Invitation emails sent' (2 real emails sent in total). (3) The join form shows agreement-terms. join-submit-button is disabled until join-rules-checkbox is ticked, then enabled. (4) After joining, each party sees 'Pay the onboarding fee' with a 2.00 ETH total and the button 'Pay 2.00 ETH'. (5) Admin saw 'Waiting for onboarding fees' (Sender: paid · Recipient: not paid yet), then 'Approve both parties' with both fees Paid. Approving set step 4 to done and opened the deposit step. (6) The sender deposit worked; verify-deposit-button stayed disabled until confirmations reached 12/12 (~24s), then 'Complete AML checks' succeeded. (7) release-aml-report-button with no document gave the toast 'Upload at least one AML / forensic document on the Forensics page first'. Admin uploaded a document on Forensics. The recipient still saw forensic-docs-locked after the upload, then could download the file after the release. (8) The recipient requested the funds, saw the 'Withdrawal AML & fees' card ($2,625,000), and paid with pay-fee-button. Admin decline returned the deal to 'Request funds' and invoice VB-INV-2026-0003 became Cancelled. Request, pay and approve again gave status Completed with the recipient balance at 1,000.00 ETH. (9) The stepper has 10 steps. On Payments, admin changed the onboarding fee to 2.5, it persisted after reload, then was restored to 2. ETH invoices show '2.00 ETH' and the recipient sees the read-only value '2.00 ETH'. Backend regression: 10/10 pytest passed (step gating, invite validation, onboarding fee auth/validation, forensic doc gating before release).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/reports/{tx_id}/uploads (category=forensic)", "issue": "Before the AML report is released, sender and recipient still get the notification 'New document shared ... Open Forensics to view it' with the document title. They can't see the document yet (forensic-docs-locked), so the message is confusing and leaks the title early. Suppress or reword it for forensic uploads before aml.report_released_at."},
+      {"endpoint": "POST /api/transactions/{id}/send-invitations", "issue": "Emails go out one after another with no handling for a partial failure. If the recipient send fails (502/503), the sender email has already gone out but invitations_sent_at is not set, so a retry sends the sender a duplicate. Re-send is also allowed at any step after parties have joined, which can trigger repeat emails."},
+      {"endpoint": "PUT /api/onboarding-fee", "issue": "The frontend sends Number(''), which is 0, when the field is empty, so an empty input silently saves a 0 ETH fee. The backend accepts 0."},
+      {"endpoint": "POST /actions/join", "issue": "The wallet address check only looks at the 0x prefix and the length of 42. It does not check that the rest is hex."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Payments", "issues": ["The empty-state text 'The escrow fee invoice is created when both parties sign' is out of date. In the new flow, onboarding invoices are created on join and the escrow fee invoice when funds are requested."]},
+      {"screen": "Forensics docs", "issues": ["Small files show '0.0 KB'. Show bytes for files under 1 KB."]},
+      {"screen": "Release decline", "issues": ["Wording mismatch: the review brief says decline returns to 'step 9 (request funds)', but in the 10-step STEPS, 'Request funds' is step 8. The behaviour (back to Request funds) is consistent; only the documentation/brief numbering is off."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_invite_onboarding_flow.py", "/app/test_reports/pytest/pytest_results_iter4.xml"],
+  "action_items": [
+    "Don't send the 'New document shared' notification for forensic uploads before the AML report is released (or reword it to say the report will be released later)",
+    "Make send-invitations safe against a partial failure (record per-party sent status, or validate everything before sending any email)",
+    "Validate the onboarding fee input (empty/NaN) on the frontend",
+    "Update the out-of-date Payments empty-state text",
+    "Optional: split server.py (979 lines) into routers"
+  ],
+  "critical_code_review_comments": [
+    "server.py is 979 lines, over the 700-line guideline. Split it into auth/transactions/invoices/reports/forensics routers.",
+    "upload_report notifies parties about forensic docs before release (see backend minor).",
+    "send_invitations makes two sequential external calls with no idempotency.",
+    "On release decline the old payment.invoice_id is kept until the next request; this works because request_release overwrites it, but it is fragile."
+  ],
+  "updated_files": ["/app/backend/tests/test_invite_onboarding_flow.py"],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (all 10 requested flows passed)"},
+  "seed_data_creation": "Created via API as admin: TEST deal VB-ETH-2026-002 (id 457dcd8d-1cb3-46c4-a0bf-3883a8f55982, now Completed, with 4 invoices, 1 forensic upload 'TEST_AML Report', and notifications/audit logs) and TEST deal VB-ETH-2026-003 (id a7f18cea-e9eb-4cfd-ade8-f2a6bd0358dd, from pytest, 1 forensic upload). There is no delete endpoint for transactions, so they remain. The seeded VB-ETH-2026-001 was not modified. The onboarding fee was changed to 2.5 and restored to 2.0. 2 emails sent to delivered@resend.dev. I did NOT call POST /api/admin/reset: my test-data rules forbid running reset/bulk-delete (it wipes all collections). The main agent or the user should run the reset manually if they want a clean state.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "To test the flow on a specific deal, set localStorage vb_tx=<tx id> before login (TxContext otherwise selects the newest deal). Join requires invitations_sent_at, so a fresh deal needs a real invitation email (only use delivered@resend.dev). Confirmations go up 1 every 2s, so 12/12 takes about 24s. Run pytest with -n 0. Seeded deal VB-ETH-2026-001 is still at step 1 (fresh).",
+  "rca of the issue": ""
+}

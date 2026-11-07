@@ -359,18 +359,30 @@ class InviteEmailsIn(BaseModel):
     recipient: str
 
 
+EMAIL_RE = r"[^@\s]+@[^@\s]+\.[^@\s]+"
+
+
+async def deliver_invites(tx: dict, emails: dict, user: dict):
+    need(all(re.fullmatch(EMAIL_RE, e) for e in emails.values()), "Enter two valid email addresses")
+    await db.transactions.update_one({"id": tx["id"]}, {"$set": {"invite_emails": emails}})
+    sent = []
+    for p, e in emails.items():
+        if joined(tx["onboarding"][p]):
+            continue
+        await send_email(to=e, subject=f"Invitation to escrow deal {tx['reference']} — VaultBridge Escrow", html=invite_html(tx, p))
+        sent.append(p)
+        await db.transactions.update_one({"id": tx["id"]}, {"$set": {"invitations_sent_at": now(), f"invitations.{p}.emailed_at": now()}})
+        await notify(tx, [p], f"You're invited to escrow deal {tx['reference']}",
+                     f"Invitation email sent to {e}. Read the rules and enter the escrow from Home.", "email")
+    need(bool(sent), "Both parties have already joined")
+    await log(tx, user, "Invitation emails sent", " · ".join(f"{p}: {emails[p]}" for p in sent))
+
+
 @api.post("/transactions/{tx_id}/send-invitations")
 async def send_invitations(tx_id: str, body: InviteEmailsIn, user: dict = Depends(admin_user)):
     tx = await load_tx(tx_id, user)
     need(not tx.get("completed_at"), "This deal is already completed")
-    emails = {"sender": body.sender.strip().lower(), "recipient": body.recipient.strip().lower()}
-    need(all(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", e) for e in emails.values()), "Enter two valid email addresses")
-    for p, e in emails.items():
-        await send_email(to=e, subject=f"Invitation to escrow deal {tx['reference']} — VaultBridge Escrow", html=invite_html(tx, p))
-        await notify(tx, [p], f"You're invited to escrow deal {tx['reference']}",
-                     f"Invitation email sent to {e}. Read the rules and enter the escrow from Home.", "email")
-    await db.transactions.update_one({"id": tx_id}, {"$set": {"invite_emails": emails, "invitations_sent_at": now()}})
-    await log(tx, user, "Invitation emails sent", f"sender: {emails['sender']} · recipient: {emails['recipient']}")
+    await deliver_invites(tx, {"sender": body.sender.strip().lower(), "recipient": body.recipient.strip().lower()}, user)
     return present(await load_tx(tx_id, user))
 
 
@@ -379,6 +391,8 @@ class TxCreate(BaseModel):
     usd_value: float
     sender_name: str
     recipient_name: str
+    sender_email: str
+    recipient_email: str
     network: str = "Ethereum Mainnet"
 
 
@@ -392,6 +406,8 @@ async def list_transactions(user: dict = Depends(current_user)):
 async def create_transaction(body: TxCreate, user: dict = Depends(admin_user)):
     if body.usd_value <= 0 or not body.sender_name.strip() or not body.recipient_name.strip():
         raise HTTPException(400, "Value and party names are required")
+    emails = {"sender": body.sender_email.strip().lower(), "recipient": body.recipient_email.strip().lower()}
+    need(all(re.fullmatch(EMAIL_RE, e) for e in emails.values()), "Enter valid email addresses for both parties")
     n = await db.transactions.count_documents({}) + 1
     ref = f"VB-ETH-2026-{n:03d}"
     while await db.transactions.find_one({"reference": ref}):
@@ -399,7 +415,8 @@ async def create_transaction(body: TxCreate, user: dict = Depends(admin_user)):
         ref = f"VB-ETH-2026-{n:03d}"
     tx = await new_transaction(ref, body.usd_value, body.sender_name.strip(), body.recipient_name.strip(), body.network)
     await log(tx, user, "Deal created", f"{ref} — deal value {money(body.usd_value)}")
-    return present(tx)
+    await deliver_invites(tx, emails, user)
+    return present(await load_tx(tx["id"], user))
 
 
 @api.get("/transactions/{tx_id}")
@@ -443,7 +460,7 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
         required = ["legal_name", "contact_name", "contact_email", "wallet_address"]
         need(all(str(d.get(k, "")).strip() for k in required), "Please fill in all fields")
         w = str(d["wallet_address"]).strip()
-        need(w.startswith("0x") and len(w) == 42, "Wallet address must start with 0x and be 42 characters long")
+        need(w.startswith("0x") and len(w) == 42 and all(c in "0123456789abcdefABCDEF" for c in w[2:]), "Wallet address must be 0x followed by 40 hex characters")
         need(bool(d.get("rules_accepted")), "Please read and accept the escrow rules")
         data = {k: str(d.get(k, "")).strip() for k in required}
         sets[f"invitations.{party}"] = {"status": "accepted", "responded_at": now()}
@@ -625,7 +642,7 @@ async def get_onboarding_fee(user: dict = Depends(current_user)):
 
 @api.put("/onboarding-fee")
 async def put_onboarding_fee(body: OnboardingFeeIn, user: dict = Depends(admin_user)):
-    need(0 <= body.amount_eth <= 1000, "Onboarding fee must be between 0 and 1,000 ETH")
+    need(0 < body.amount_eth <= 1000, "Onboarding fee must be more than 0 and at most 1,000 ETH")
     await db.settings.update_one({"key": "onboarding_fee"}, {"$set": {"amount_eth": body.amount_eth}}, upsert=True)
     await log(None, user, "Onboarding fee updated", eth(body.amount_eth))
     return {"amount_eth": body.amount_eth}
@@ -770,8 +787,9 @@ async def upload_report(tx_id: str, title: str = Form(...), category: str = Form
            "content_type": file.content_type or "application/octet-stream", "size": len(content),
            "content": base64.b64encode(content).decode(), "uploaded_by": user["email"], "uploaded_at": now()}
     await db.uploaded_reports.insert_one(doc)
-    where = "Forensics" if doc["category"] == "forensic" else "Documents"
-    await notify(tx, ["sender", "recipient"], "New document shared", f"{tx['reference']}: the admin shared '{doc['title']}'. Open {where} to view it.")
+    if doc["category"] == "document" or tx["aml"].get("report_released_at"):
+        where = "Forensics" if doc["category"] == "forensic" else "Documents"
+        await notify(tx, ["sender", "recipient"], "New document shared", f"{tx['reference']}: the admin shared '{doc['title']}'. Open {where} to view it.")
     await log(tx, user, f"Document uploaded: {doc['title']}", file.filename)
     return {k: v for k, v in doc.items() if k not in ("_id", "content")}
 

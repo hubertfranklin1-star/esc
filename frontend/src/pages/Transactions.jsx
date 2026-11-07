@@ -15,11 +15,11 @@ import { usd, ethFmt, dt } from "@/lib/fmt";
 
 const CreateDialog = ({ open, onOpenChange }) => {
   const { loadList, select } = useTx();
-  const [f, setF] = useState({ usd_value: "250000000", sender_name: "Demo Sender Holdings", recipient_name: "Demo Buyer Ltd" });
+  const [f, setF] = useState({ usd_value: "250000000", sender_name: "", sender_email: "", recipient_name: "", recipient_email: "" });
   const create = async () => {
     try {
       const r = await api.post("/transactions", { ...f, usd_value: Number(f.usd_value) });
-      toast.success(`${r.data.reference} created — send the invitation emails from Home`);
+      toast.success(`${r.data.reference} created — invitation emails sent`);
       await loadList();
       select(r.data.id);
       return true;
@@ -36,11 +36,15 @@ const CreateDialog = ({ open, onOpenChange }) => {
   );
   return (
     <ConfirmDialog open={open} onOpenChange={onOpenChange} testid="create-tx-dialog" title="New deal"
-      description="Next, send the invitation emails from Home. ETH amount uses $2,350 per ETH." confirmLabel="Create deal" onConfirm={create}>
+      description="An invitation email with the deal details and escrow rules is sent to both parties as soon as you create the deal. ETH amount uses $2,350 per ETH." confirmLabel="Create deal & send invitations" onConfirm={create}>
       <div className="space-y-3">
         {field("usd_value", "Deal value (USD)", "number")}
-        {field("sender_name", "Sender company")}
-        {field("recipient_name", "Recipient company")}
+        <div className="grid gap-3 sm:grid-cols-2">
+          {field("sender_name", "Sender company")}
+          {field("sender_email", "Sender email", "email")}
+          {field("recipient_name", "Recipient company")}
+          {field("recipient_email", "Recipient email", "email")}
+        </div>
       </div>
     </ConfirmDialog>
   );

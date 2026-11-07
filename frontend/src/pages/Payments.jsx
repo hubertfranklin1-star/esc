@@ -126,7 +126,7 @@ export default function Payments() {
         actions={isAdmin && <Button data-testid="new-invoice-button" disabled={tx.on_hold || !!tx.completed_at} onClick={() => setOpen(true)}>New invoice</Button>} />
       <div className="grid gap-6 xl:grid-cols-[1fr_340px] [&>*]:min-w-0">
         <Panel title="Invoices" testid="invoices-table">
-          {invoices.length === 0 ? <Empty testid="invoices-empty">No invoices yet. The escrow fee invoice is created when both parties sign.</Empty> : (
+          {invoices.length === 0 ? <Empty testid="invoices-empty">No invoices yet. Onboarding fee invoices are created when each party joins; the escrow fee invoice when the recipient requests the funds.</Empty> : (
             <div className="overflow-x-auto">
               <Table className="vb-table">
                 <TableHeader><TableRow><TableHead>Invoice</TableHead><TableHead>For</TableHead><TableHead>Amount</TableHead><TableHead>Billed to</TableHead><TableHead>Status</TableHead><TableHead>Issued</TableHead><TableHead>Paid</TableHead><TableHead /></TableRow></TableHeader>
