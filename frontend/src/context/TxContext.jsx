@@ -6,6 +6,7 @@ const TxCtx = createContext(null);
 
 export const TxProvider = ({ children }) => {
   const [list, setList] = useState([]);
+  const [loaded, setLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState(localStorage.getItem("vb_tx") || "");
   const [tx, setTx] = useState(null);
   const [tick, setTick] = useState(0);
@@ -13,6 +14,7 @@ export const TxProvider = ({ children }) => {
   const loadList = useCallback(async () => {
     const r = await api.get("/transactions");
     setList(r.data);
+    setLoaded(true);
     return r.data;
   }, []);
 
@@ -21,11 +23,25 @@ export const TxProvider = ({ children }) => {
     setSelectedId(id);
   };
 
+  // Keep the selected deal valid: fall back to the latest deal, or to none when the list is empty.
+  const keepValid = useCallback((l, current) => {
+    if (l.find((t) => t.id === current)) return;
+    const next = l.length ? l[l.length - 1].id : "";
+    if (!next) setTx(null);
+    localStorage.setItem("vb_tx", next);
+    setSelectedId(next);
+  }, []);
+
   useEffect(() => {
-    loadList().then((l) => {
-      if (l.length && !l.find((t) => t.id === selectedId)) select(l[l.length - 1].id);
-    }).catch(() => {});
-  }, [loadList, selectedId]);
+    loadList().then((l) => keepValid(l, selectedId)).catch(() => {});
+  }, [loadList, keepValid, selectedId]);
+
+  const resync = useCallback(async () => {
+    try {
+      const l = await loadList();
+      keepValid(l, selectedId);
+    } catch (e) { /* ignore */ }
+  }, [loadList, keepValid, selectedId]);
 
   const refresh = useCallback(async () => {
     if (!selectedId) return;
@@ -33,8 +49,13 @@ export const TxProvider = ({ children }) => {
       const r = await api.get(`/transactions/${selectedId}`);
       setTx(r.data);
       setTick((t) => t + 1);
-    } catch (e) { /* handled by interceptor */ }
-  }, [selectedId]);
+    } catch (e) {
+      if (e?.response?.status === 404) {
+        setTx(null);
+        await resync();
+      }
+    }
+  }, [selectedId, resync]);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -58,7 +79,7 @@ export const TxProvider = ({ children }) => {
   };
 
   return (
-    <TxCtx.Provider value={{ list, tx, selectedId, select, refresh, act, loadList, tick }}>{children}</TxCtx.Provider>
+    <TxCtx.Provider value={{ list, loaded, tx, selectedId, select, refresh, resync, act, loadList, tick }}>{children}</TxCtx.Provider>
   );
 };
 

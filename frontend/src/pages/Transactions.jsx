@@ -57,7 +57,7 @@ export default function Transactions() {
   const [open, setOpen] = useState(false);
   const isAdmin = user.role === "admin";
   const toggleHold = async (t) => {
-    if (t.id !== tx.id) select(t.id);
+    if (t.id !== tx?.id) select(t.id);
     else await act(t.on_hold ? "resume" : "hold", {}, t.on_hold ? "Deal resumed" : "Deal on hold");
   };
   return (

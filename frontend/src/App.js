@@ -12,6 +12,7 @@ import Checks from "@/pages/Checks";
 import Forensics from "@/pages/Forensics";
 import Activity from "@/pages/Activity";
 import SettingsPage from "@/pages/Settings";
+import Accounts from "@/pages/Accounts";
 
 function App() {
   return (
@@ -26,6 +27,7 @@ function App() {
             <Route path="documents" element={<Documents />} />
             <Route path="checks" element={<Checks />} />
             <Route path="forensics" element={<Forensics />} />
+            <Route path="accounts" element={<Accounts />} />
             <Route path="activity" element={<Activity />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>

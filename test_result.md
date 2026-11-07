@@ -101,3 +101,48 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+user_problem_statement: "VaultBridge Escrow — admin can delete an account completely. Deleting a sender/recipient account erases their login and EVERY deal they are on (for both parties) with all invoices, documents, messages, wallet scans and activity; Activity keeps one note 'A <role> account was deleted' with no name or email. Blocked while ETH is held in escrow on one of their deals. Admin accounts and own account protected."
+
+backend:
+  - task: "Account list + deletion preview + complete account deletion"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py (section '# ---------- accounts: admin view & complete deletion ----------')"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "GET /api/accounts, GET /api/accounts/{id}/deletion-preview, DELETE /api/accounts/{id}. Sample sender/recipient + sample deal only seeded on first start (settings key 'seeded'). new_transaction no longer needs existing party users. auto_scan skips writing if the deal was deleted mid-scan. Main agent smoke test passed."
+
+frontend:
+  - task: "Accounts page (admin) + delete dialog + Activity 'All activity' + no-deals empty state"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/Accounts.jsx, pages/Activity.jsx, components/AppLayout.jsx, context/TxContext.jsx, components/ConfirmDialog.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "New /accounts page with Delete per sender/recipient, preview of what is erased, checkbox confirm, blocked state when ETH in escrow. Activity has This deal / All activity toggle for admin. When a user's last deal disappears, shows 'No deals yet' instead of endless Loading."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 8
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Account list + deletion preview + complete account deletion"
+    - "Accounts page (admin) + delete dialog + Activity 'All activity' + no-deals empty state"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "ETHERSCAN_API_KEY and OWNER_PASSWORD are NOT configured (user skipped). Creating deals via API fails with 503 (needs live ETH price) — expected. Seed synthetic test data directly in MongoDB for deletion tests. Do not delete the sample accounts sender@vaultbridge.demo / recipient@vaultbridge.demo or deal VB-ETH-2026-001."

@@ -333,18 +333,22 @@ async def next_counter(name: str) -> int:
 
 
 async def new_transaction(reference: str, usd_value: float, sender_name: str, recipient_name: str, network: str, links: Optional[dict] = None, price: float = ETH_PRICE) -> dict:
-    sender = await db.users.find_one({"role": "sender"}, {"_id": 0})
-    recipient = await db.users.find_one({"role": "recipient"}, {"_id": 0})
+    if links is None:  # first-run sample deal: link the sample party accounts when they exist
+        links = {"invite_emails": {"sender": "", "recipient": ""}}
+        for p in ("sender", "recipient"):
+            u = await db.users.find_one({"role": p}, {"_id": 0})
+            if u:
+                links.update({f"{p}_user_id": u["id"], f"{p}_email": u["email"]})
+                links["invite_emails"][p] = u["email"]
     qty = round(usd_value / price, 6)
     party = {"status": "pending", "responded_at": None}
     ob = {"status": "not_started", "data": {}, "submitted_at": None, "reviewed_at": None, "note": ""}
     tx = {
         "id": new_id(), "reference": reference, "asset": "ETH", "usd_value": usd_value, "eth_price": price,
         "eth_quantity": qty, "network": network, "sender_name": sender_name, "recipient_name": recipient_name,
-        "sender_user_id": sender["id"], "recipient_user_id": recipient["id"],
-        "sender_email": sender["email"], "recipient_email": recipient["email"],
+        "sender_user_id": None, "recipient_user_id": None, "sender_email": "", "recipient_email": "",
         "escrow_vault_address": None, "created_at": now(), "invitations_sent_at": None,
-        "invite_emails": {"sender": sender["email"], "recipient": recipient["email"]},
+        "invite_emails": {"sender": "", "recipient": ""},
         "invitations": {"sender": dict(party), "recipient": dict(party)},
         "onboarding": {"sender": dict(ob), "recipient": dict(ob)},
         "agreement": {"issued_at": None, "sender_accepted_at": None, "recipient_accepted_at": None},
@@ -675,6 +679,8 @@ async def auto_scan(tx: dict, party: str, wallet: str):
         logger.error("auto wallet scan failed: %s", e)
         await db.transactions.update_one({"id": tx["id"]}, {"$set": {key: {"status": "failed", "error": str(e)[:200], "finished_at": now()}}})
         return
+    if not await db.transactions.find_one({"id": tx["id"]}, {"_id": 1}):
+        return  # the deal was deleted while the scan ran — leave no trace
     doc = {"id": new_id(), "label": f"{tx['reference']} · {party} wallet (on join)", "report": report, "created_at": now(),
            "created_by": "system", "user_id": None, "transaction_id": tx["id"]}
     await db.forensic_scans.insert_one(dict(doc))
@@ -1106,6 +1112,95 @@ async def list_users(user: dict = Depends(admin_user)):
     return [public_user(u) async for u in db.users.find({}, {"_id": 0})]
 
 
+# ---------- accounts: admin view & complete deletion ----------
+PARTIES = ("sender", "recipient")
+
+
+def slots(t: dict, u: dict) -> List[str]:
+    inv = t.get("invite_emails") or {}
+    return [p for p in PARTIES if t.get(f"{p}_user_id") == u["id"] or t.get(f"{p}_email") == u["email"] or inv.get(p) == u["email"]]
+
+
+def deal_query(u: dict) -> dict:
+    return {"$or": [c for p in PARTIES for c in ({f"{p}_user_id": u["id"]}, {f"{p}_email": u["email"]}, {f"invite_emails.{p}": u["email"]})]}
+
+
+def in_escrow(t: dict) -> bool:
+    return bool((t.get("deposit") or {}).get("initiated_at")) and not t.get("completed_at")
+
+
+def deal_brief(t: dict) -> dict:
+    return {"id": t["id"], "reference": t["reference"], "status": status_of(t), "in_escrow": in_escrow(t),
+            "sender_name": t["sender_name"], "recipient_name": t["recipient_name"]}
+
+
+def mentions(v: str, whole: bool = False) -> re.Pattern:
+    return re.compile(f"^{re.escape(v)}$" if whole else re.escape(v), re.I)
+
+
+async def deletion_scope(u: dict) -> dict:
+    """Everything that belongs to or mentions this account: every deal they are on (for both parties) and all of
+    its invoices, documents, messages, wallet scans and activity, plus anything else naming their email or wallet."""
+    deals = await db.transactions.find(deal_query(u), {"_id": 0}).to_list(5000)
+    ids = [t["id"] for t in deals]
+    wallets = sorted({w.lower() for t in deals for p in slots(t, u)
+                      if (w := str(((t.get("onboarding") or {}).get(p) or {}).get("data", {}).get("wallet_address", "")).strip())})
+    text = [mentions(u["email"])] + [mentions(w) for w in wallets]
+    filters = {
+        "invoices": {"$or": [{"transaction_id": {"$in": ids}}, {"responsible_user_id": u["id"]}]},
+        "uploaded_reports": {"transaction_id": {"$in": ids}},
+        "notifications": {"$or": [{"transaction_id": {"$in": ids}}, {"user_id": u["id"]}]},
+        "forensic_scans": {"$or": [{"transaction_id": {"$in": ids}}, {"user_id": u["id"]}, {"created_by": u["email"]},
+                                   {"report.address": {"$in": [mentions(w, whole=True) for w in wallets]}}]},
+        "audit_logs": {"$or": [{"transaction_id": {"$in": ids}}, {"actor": u["email"]}, {"action": {"$in": text}}, {"detail": {"$in": text}}]},
+    }
+    return {"deals": deals, "ids": ids, "filters": filters}
+
+
+async def load_account(user_id: str, admin: dict) -> dict:
+    u = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not u:
+        raise HTTPException(404, "Account not found")
+    need(u["id"] != admin["id"], "You can't delete your own account")
+    need(u["role"] in PARTIES, "Administrator accounts can't be deleted")
+    return u
+
+
+@api.get("/accounts")
+async def list_accounts(admin: dict = Depends(admin_user)):
+    txs = await db.transactions.find({}, {"_id": 0}).sort("created_at", ASCENDING).to_list(5000)
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", ASCENDING).to_list(5000)
+    return [{**public_user(u), "created_at": u.get("created_at"), "is_you": u["id"] == admin["id"],
+             "deletable": u["role"] in PARTIES and u["id"] != admin["id"],
+             "deals": [deal_brief(t) for t in txs if slots(t, u)]} for u in users]
+
+
+@api.get("/accounts/{user_id}/deletion-preview")
+async def deletion_preview(user_id: str, admin: dict = Depends(admin_user)):
+    u = await load_account(user_id, admin)
+    scope = await deletion_scope(u)
+    counts = {"deals": len(scope["ids"])}
+    for k, q in scope["filters"].items():
+        counts[k] = await db[k].count_documents(q)
+    return {"account": public_user(u), "deals": [deal_brief(t) for t in scope["deals"]],
+            "blocked": [deal_brief(t) for t in scope["deals"] if in_escrow(t)], "counts": counts}
+
+
+@api.delete("/accounts/{user_id}")
+async def delete_account(user_id: str, admin: dict = Depends(admin_user)):
+    u = await load_account(user_id, admin)
+    scope = await deletion_scope(u)
+    held = [t["reference"] for t in scope["deals"] if in_escrow(t)]
+    need(not held, f"ETH is held in escrow on {', '.join(held)} — release the funds before deleting this account")
+    await db.users.delete_one({"id": u["id"]})  # signs them out everywhere straight away
+    counts = {"deals": (await db.transactions.delete_many({"id": {"$in": scope["ids"]}})).deleted_count}
+    for k, q in scope["filters"].items():
+        counts[k] = (await db[k].delete_many(q)).deleted_count
+    n = counts["deals"]
+    await log(None, admin, "Account deleted", f"A {u['role']} account was deleted" + (f", with {n} deal{'' if n == 1 else 's'}" if n else ""))
+    return {"deleted": True, "counts": counts}
+
+
 # ---------- seed ----------
 DEMO_USERS = [
     {"email": "admin@vaultbridge.demo", "password": "AdminDemo#2026", "role": "admin", "name": "Alex Morgan", "organisation": "VaultBridge Escrow"},
@@ -1114,8 +1209,10 @@ DEMO_USERS = [
 ]
 
 
-async def seed_users():
-    users = list(DEMO_USERS)
+async def seed_users(first_run: bool):
+    # Admin accounts are always kept up to date; the sample sender/recipient are created on the very first start only,
+    # so an account the admin deletes never comes back after a restart.
+    users = [u for u in DEMO_USERS if u["role"] == "admin" or first_run]
     if os.environ.get("OWNER_EMAIL") and os.environ.get("OWNER_PASSWORD"):
         users.append({"email": os.environ["OWNER_EMAIL"].lower(), "password": os.environ["OWNER_PASSWORD"], "role": "admin",
                       "name": "Platform Owner", "organisation": "VaultBridge Escrow"})
@@ -1130,10 +1227,10 @@ async def seed_users():
             await db.users.insert_one({"id": new_id(), "email": u["email"], "password_hash": hash_pw(u["password"]), **fields, "created_at": now()})
 
 
-async def seed_data():
+async def seed_data(first_run: bool):
     if not await db.settings.find_one({"key": "fees"}):
         await db.settings.insert_one({"key": "fees", "items": [{"code": c, "label": l, "amount": a, "party": p} for c, l, a, p in FEE_CATALOG]})
-    if await db.transactions.count_documents({}) == 0:
+    if first_run and await db.transactions.count_documents({}) == 0:
         tx = await new_transaction("VB-ETH-2026-001", 6_000_000_000.0, "Demo Investment Entity", "Demo Acquisition Company", "Ethereum Mainnet")
         await log(tx, None, "Deal created", "VB-ETH-2026-001 created — waiting for the admin to send invitation emails")
 
@@ -1155,8 +1252,11 @@ async def ensure_indexes():
 
 @app.on_event("startup")
 async def startup():
-    await seed_users()
-    await seed_data()
+    first_run = not await db.settings.find_one({"key": "seeded"})
+    await seed_users(first_run)
+    await seed_data(first_run)
+    if first_run:
+        await db.settings.update_one({"key": "seeded"}, {"$set": {"at": now()}}, upsert=True)
     app.state.index_task = asyncio.create_task(ensure_indexes())
 
 
