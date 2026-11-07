@@ -9,6 +9,7 @@ import Transactions from "@/pages/Transactions";
 import Payments from "@/pages/Payments";
 import Documents from "@/pages/Documents";
 import Checks from "@/pages/Checks";
+import Forensics from "@/pages/Forensics";
 import Activity from "@/pages/Activity";
 import SettingsPage from "@/pages/Settings";
 
@@ -24,6 +25,7 @@ function App() {
             <Route path="payments" element={<Payments />} />
             <Route path="documents" element={<Documents />} />
             <Route path="checks" element={<Checks />} />
+            <Route path="forensics" element={<Forensics />} />
             <Route path="activity" element={<Activity />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>

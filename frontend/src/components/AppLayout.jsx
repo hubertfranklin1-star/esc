@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { NavLink, Outlet, Navigate } from "react-router-dom";
 import {
-  Home, ArrowLeftRight, ShieldCheck, Receipt, FileText, ScrollText, Settings, LogOut, Menu,
+  Home, ArrowLeftRight, ShieldCheck, Receipt, FileText, ScrollText, Settings, LogOut, Menu, ScanSearch,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -12,7 +12,7 @@ import { StatusPill } from "@/components/common";
 
 const NAV = [
   ["/", "Home", Home], ["/deals", "Deals", ArrowLeftRight], ["/payments", "Payments", Receipt],
-  ["/documents", "Documents", FileText], ["/checks", "Checks", ShieldCheck, "admin"], ["/activity", "Activity", ScrollText], ["/settings", "Settings", Settings],
+  ["/documents", "Documents", FileText], ["/forensics", "Forensics", ScanSearch], ["/checks", "Checks", ShieldCheck, "admin"], ["/activity", "Activity", ScrollText], ["/settings", "Settings", Settings],
 ];
 const ROLE_LABEL = { admin: "Admin", sender: "Sender", recipient: "Recipient" };
 

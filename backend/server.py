@@ -24,9 +24,11 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 try:
-    from backend.pdf_reports import build_report
+    from backend.pdf_reports import build_report, build_forensic_report
+    from backend import forensics
 except ModuleNotFoundError:
-    from pdf_reports import build_report
+    from pdf_reports import build_report, build_forensic_report
+    import forensics
 
 client = AsyncIOMotorClient(os.environ["MONGO_URL"])
 db = client[os.environ["DB_NAME"]]
@@ -694,6 +696,90 @@ async def download_upload(up_id: str, user: dict = Depends(current_user)):
     await load_tx(doc["transaction_id"], user)
     return Response(base64.b64decode(doc["content"]), media_type=doc["content_type"],
                     headers={"Content-Disposition": f'attachment; filename="{doc["filename"]}"'})
+
+
+# ---------- forensics (live on-chain data) ----------
+class ScanIn(BaseModel):
+    address: str
+    label: str = ""
+
+
+def scan_summary(s: dict) -> dict:
+    r = s["report"]
+    return {"id": s["id"], "address": r["address"], "label": s.get("label", ""), "balance_eth": r["balance_eth"],
+            "risk": r["risk"], "sanctioned": r["sanctions"]["listed"], "created_at": s["created_at"], "created_by": s["created_by"]}
+
+
+@api.post("/forensics/scan")
+async def forensic_scan(body: ScanIn, user: dict = Depends(current_user)):
+    addr = body.address.strip()
+    need(forensics.valid(addr), "Enter a valid Ethereum address (0x followed by 40 hex characters)")
+    try:
+        report = await forensics.analyse(addr)
+    except Exception as e:
+        logger.error("forensic scan failed: %s", e)
+        raise HTTPException(502, f"Could not read blockchain data: {e}")
+    doc = {"id": new_id(), "label": body.label.strip(), "report": report, "created_at": now(), "created_by": user["email"], "user_id": user["id"]}
+    await db.forensic_scans.insert_one(dict(doc))
+    await log(None, user, "Forensic scan", f"{addr} — risk {report['risk']['band']} ({report['risk']['score']}/100)")
+    return {**scan_summary(doc), "report": report}
+
+
+def scan_scope(user: dict) -> dict:
+    return {} if user["role"] == "admin" else {"user_id": user["id"]}
+
+
+@api.get("/forensics/scans")
+async def forensic_scans(user: dict = Depends(current_user)):
+    docs = await db.forensic_scans.find(scan_scope(user), {"_id": 0}).sort("created_at", DESCENDING).to_list(100)
+    return [scan_summary(d) for d in docs]
+
+
+async def load_scan(scan_id: str, user: dict) -> dict:
+    doc = await db.forensic_scans.find_one({"id": scan_id, **scan_scope(user)}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Scan not found")
+    return doc
+
+
+@api.get("/forensics/scans/{scan_id}")
+async def forensic_scan_get(scan_id: str, user: dict = Depends(current_user)):
+    doc = await load_scan(scan_id, user)
+    return {**scan_summary(doc), "report": doc["report"]}
+
+
+@api.get("/forensics/scans/{scan_id}/pdf")
+async def forensic_pdf(scan_id: str, user: dict = Depends(current_user)):
+    doc = await load_scan(scan_id, user)
+    r = doc["report"]
+    a, s, rs = r["activity"], r["sanctions"], r["risky_services"]
+    sections = [
+        ("Subject wallet", [("Address", r["address"]), ("Label", doc.get("label") or "—"), ("Network", r["chain"]),
+                            ("Account type", "Smart contract" if r["is_contract"] else "Externally owned account (EIP-7702 delegated)" if r.get("delegated_7702") else "Externally owned account"),
+                            ("Current ETH balance", f"{r['balance_eth']:,.6f} ETH")]),
+        ("Risk assessment", [("Risk score", f"{r['risk']['score']}/100"), ("Risk band", r["risk"]["band"])] + [("Finding", x) for x in r["risk"]["reasons"]]),
+        ("Sanctions screening", [("Wallet on OFAC list", "YES" if s["listed"] else "No"), ("Sanctioned counterparties", len(s["counterparty_hits"])),
+                                 ("Addresses screened against", f"{s['list_size']:,}"), ("List source", s["list_source"]), ("List retrieved", s["list_loaded_at"] or "unavailable")]),
+        ("Mixer / high-risk service exposure", [("Wallet is a known service", rs["self"] or "No"), ("Exposed counterparties", len(rs["counterparty_hits"]))]
+         + [(c["address"], c["service"]) for c in rs["counterparty_hits"]]),
+        ("Transaction history", [("First activity", a["first_seen"] or "—"), ("Last activity", a["last_seen"] or "—"),
+                                 ("Normal / internal / token transfers", f"{a['normal_tx']:,} / {a['internal_tx']:,} / {a['token_transfers']:,}"),
+                                 ("Total ETH received", f"{a['eth_in']:,.6f} ETH ({a['tx_in']:,} tx)"), ("Total ETH sent", f"{a['eth_out']:,.6f} ETH ({a['tx_out']:,} tx)"),
+                                 ("Failed transactions", a["failed_tx"]), ("Unique counterparties", a["unique_counterparties"]),
+                                 ("Coverage", "Most recent records per category (provider limit reached)" if a["history_capped"] else "Full history")]),
+        ("Top counterparties", [("Address", "Received ETH", "Sent ETH", "Interactions", "Flags")] + [
+            (c["address"], f"{c['received_eth']:,.4f}", f"{c['sent_eth']:,.4f}", c["interactions"],
+             ", ".join(x for x in ["OFAC" if c["sanctioned"] else "", c["service"] or ""] if x) or "—") for c in r["counterparties"][:15]]),
+        ("Token activity", [("Token", "Received", "Sent", "Net", "Transfers")] + [
+            (f"{t['symbol']} ({t['contract'][:10]}…)", f"{t['received']:,.4f}", f"{t['sent']:,.4f}", f"{t['net']:,.4f}", t["transfers"]) for t in r["tokens"][:15]]),
+        ("Recent transactions", [("Hash", "Time (UTC)", "Value ETH", "Status")] + [
+            (t["hash"], t["time"][:19].replace("T", " "), f"{t['value_eth']:,.6f}", t["status"]) for t in r["recent_transactions"][:15]]),
+        ("Method", [("Data source", r["data_source"]), ("Generated", r["generated_at"]), ("Requested by", doc["created_by"]),
+                    ("Scope", "Direct (1-hop) counterparties of the subject wallet. Verify any hit independently before acting.")]),
+    ]
+    sub = f"Subject: <b>{r['address']}</b> &nbsp;|&nbsp; Generated {r['generated_at'][:19].replace('T', ' ')} UTC &nbsp;|&nbsp; Report ID {doc['id'][:8].upper()}"
+    pdf = build_forensic_report("On-Chain Forensic Analysis — Wallet Due-Diligence Report", sub, sections)
+    return Response(pdf, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="forensic-{r["address"][:10]}.pdf"'})
 
 
 # ---------- notifications, audit, users ----------
