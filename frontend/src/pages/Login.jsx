@@ -1,17 +1,12 @@
 import { useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, KeyRound, MailCheck } from "lucide-react";
+import { ArrowLeft, MailCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/context/AuthContext";
 import { api, errMsg } from "@/lib/api";
-
-const DEMO = [
-  { role: "Sender", email: "sender@vaultbridge.demo", password: "SenderDemo#2026", org: "Demo Investment Entity" },
-  { role: "Recipient", email: "recipient@vaultbridge.demo", password: "RecipientDemo#2026", org: "Demo Acquisition Company" },
-];
 
 const Field = ({ id, label, ...p }) => (
   <div className="space-y-1.5">
@@ -30,25 +25,6 @@ const Hero = () => (
       <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-300">
         Hold ETH safely between a sender and a recipient. Join, sign, deposit, release — in 10 simple steps.
       </p>
-    </div>
-  </div>
-);
-
-const Demo = ({ pick }) => (
-  <div className="mt-10">
-    <div className="mb-3 flex items-center gap-2 text-xs text-slate-400"><KeyRound className="h-3.5 w-3.5 text-amber-300" /> Demo accounts — tap one to fill in</div>
-    <div className="space-y-2">
-      {DEMO.map((d) => (
-        <button key={d.role} type="button" data-testid={`demo-account-${d.role.toLowerCase()}`} onClick={() => pick(d)}
-          className="w-full rounded-md border border-[#26354D] bg-[#111827] p-3 text-left transition-colors duration-200 hover:border-sky-400/50 hover:bg-[#182235]">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-semibold text-white">{d.role}</span>
-            <span className="text-[11px] text-slate-400">{d.org}</span>
-          </div>
-          <div className="mt-1 font-mono text-xs text-sky-300">{d.email}</div>
-          <div className="font-mono text-xs text-slate-400">{d.password}</div>
-        </button>
-      ))}
     </div>
   </div>
 );
@@ -122,7 +98,6 @@ export default function Login() {
                 </button>
               )}
             </form>
-            <Demo pick={(d) => { setF({ ...f, email: d.email, password: d.password }); setStage("login"); }} />
           </div>
         </div>
       </div>
