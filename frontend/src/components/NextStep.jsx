@@ -13,7 +13,7 @@ import { Confirmations } from "@/components/DepositTracker";
 import { useTx } from "@/context/TxContext";
 import { useAuth } from "@/context/AuthContext";
 import { api, errMsg, download } from "@/lib/api";
-import { usd, ethFmt } from "@/lib/fmt";
+import { usd, ethFmt, ethExact } from "@/lib/fmt";
 
 const newWallet = () => "0x" + Array.from(crypto.getRandomValues(new Uint8Array(20))).map((b) => b.toString(16).padStart(2, "0")).join("");
 const WHO = { admin: "the admin", sender: "the sender", recipient: "the recipient", both: "both parties" };
@@ -74,7 +74,7 @@ const useInvoice = (tx, id, stamp) => {
   return inv;
 };
 const useFeeInvoice = (tx) => useInvoice(tx, tx.payment.invoice_id, tx.payment.submitted_at);
-const fee = (inv, v = inv.amount) => (inv.currency === "ETH" ? ethFmt(v, 2) : usd(v));
+const fee = (inv, v = inv.amount) => (inv.currency === "ETH" ? ethExact(v) : usd(v));
 
 const InvoiceBox = ({ inv, children }) => (
   <div className="space-y-4">
@@ -166,6 +166,8 @@ const PartyStep = ({ tx, party, act, refresh }) => {
       </Card>
     );
   const step = tx.steps[s - 1];
+  if (s === 3 && of.submitted_at)
+    return <Card title="Your onboarding fee is paid" text={of.confirmed_at ? "Payment confirmed. Waiting for the other party to pay theirs." : "The admin will confirm your payment. Waiting for the other party to pay too."} />;
   return <Card title="Nothing to do right now" text={`Waiting for ${WHO[step.actor]}: ${step.title.toLowerCase()}.`} />;
 };
 

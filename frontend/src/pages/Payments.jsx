@@ -12,9 +12,9 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useTx } from "@/context/TxContext";
 import { useAuth } from "@/context/AuthContext";
 import { api, errMsg, download } from "@/lib/api";
-import { usd, dt, cap, ethFmt } from "@/lib/fmt";
+import { usd, dt, cap, ethExact } from "@/lib/fmt";
 
-const amt = (inv, v = inv.amount) => (inv.currency === "ETH" ? ethFmt(v, 2) : usd(v, 2));
+const amt = (inv, v = inv.amount) => (inv.currency === "ETH" ? ethExact(v) : usd(v, 2));
 const KIND = { engagement: "Escrow fee", onboarding: "Onboarding fee" };
 
 const OnboardingFee = ({ isAdmin }) => {
@@ -29,11 +29,11 @@ const OnboardingFee = ({ isAdmin }) => {
       <div className="flex items-center justify-between gap-3">
         <span className="text-sm text-white">Per party</span>
         {isAdmin ? <Input type="number" min="0" step="0.1" data-testid="onboarding-fee-input" value={v} onChange={(e) => setV(e.target.value)} className="h-8 w-32 bg-[#0B111E] text-right font-mono text-xs" />
-          : <span data-testid="onboarding-fee-value" className="font-mono text-sm">{ethFmt(v, 2)}</span>}
+          : <span data-testid="onboarding-fee-value" className="font-mono text-sm">{ethExact(v)}</span>}
       </div>
       <div className="mt-3 space-y-1.5">
         <span className="text-sm text-white">Pay-to wallet</span>
-        {isAdmin ? <Input data-testid="fee-wallet-input" value={w} onChange={(e) => setW(e.target.value)} placeholder="0x… your receiving wallet" className="h-8 bg-[#0B111E] font-mono text-xs" />
+        {isAdmin ? <Input data-testid="fee-wallet-input" value={w} onChange={(e) => setW(e.target.value)} placeholder="0x… your receiving wallet" className="h-8 bg-[#0B111E] px-2 font-mono text-[10px]" />
           : <div data-testid="fee-wallet-value" className="break-all font-mono text-xs text-slate-300">{w || "Not set yet"}</div>}
       </div>
       {isAdmin && <p className="mt-2 text-[11px] text-slate-500">The amount applies to parties who join after you save. Parties send the fee to this wallet.</p>}
@@ -103,6 +103,7 @@ const Row = ({ inv, user, run }) => (
     <TableCell>
       <StatusPill status={inv.status} testid={`invoice-status-${inv.invoice_number}`} />
       {inv.verified_onchain && <a data-testid={`invoice-tx-${inv.invoice_number}`} href={`https://etherscan.io/tx/${inv.payment_tx_hash}`} target="_blank" rel="noreferrer" className="mt-1 block text-[10px] text-emerald-300 underline">Verified on-chain</a>}
+      {inv.verified_onchain && inv.payment_from_matches === false && user.role === "admin" && <div data-testid={`invoice-from-warning-${inv.invoice_number}`} className="mt-0.5 text-[10px] text-amber-300">Sent from another wallet</div>}
     </TableCell>
     <TableCell className="text-xs text-slate-400">{dt(inv.issued_at)}</TableCell>
     <TableCell className="text-xs text-slate-400">{dt(inv.paid_at)}</TableCell>

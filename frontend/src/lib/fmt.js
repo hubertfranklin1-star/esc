@@ -4,6 +4,9 @@ export const usd = (v, digits = 0) =>
 export const ethFmt = (v, digits = 4) =>
   `${Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })} ETH`;
 
+export const ethExact = (v) =>
+  `${Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 })} ETH`;
+
 export const dt = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "—");
 
 export const short = (s, n = 8) => (s ? `${s.slice(0, n + 2)}…${s.slice(-n)}` : "—");

@@ -81,7 +81,7 @@ async def _call(http: httpx.AsyncClient, module: str, action: str, **params):
 TX_HASH = re.compile(r"^0x[0-9a-fA-F]{64}$")
 
 
-async def verify_payment(tx_hash: str, to_addr: str, min_eth: float) -> dict:
+async def verify_payment(tx_hash: str, to_addr: str, min_eth: float, not_before: datetime) -> dict:
     async with httpx.AsyncClient(timeout=20) as http:
         t = await _call(http, "proxy", "eth_getTransactionByHash", txhash=tx_hash)
         if not isinstance(t, dict):
@@ -96,7 +96,11 @@ async def verify_payment(tx_hash: str, to_addr: str, min_eth: float) -> dict:
         rc = await _call(http, "proxy", "eth_getTransactionReceipt", txhash=tx_hash)
         if not isinstance(rc, dict) or rc.get("status") != "0x1":
             raise ValueError("This transaction failed on-chain")
-    return {"from": t["from"], "value_eth": value, "block": int(t["blockNumber"], 16)}
+        blk = await _call(http, "proxy", "eth_getBlockByNumber", tag=t["blockNumber"], boolean="false")
+        mined = datetime.fromtimestamp(int(blk["timestamp"], 16), timezone.utc)
+        if mined < not_before:
+            raise ValueError("This transaction was sent before your invoice was issued — send a new payment and paste its hash")
+    return {"from": t["from"], "value_eth": value, "block": int(t["blockNumber"], 16), "mined_at": mined.isoformat()}
 
 
 async def load_ofac(http: httpx.AsyncClient) -> set:

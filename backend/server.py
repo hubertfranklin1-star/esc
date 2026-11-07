@@ -19,6 +19,7 @@ from fastapi.responses import Response
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel
 from pymongo import ASCENDING, DESCENDING, IndexModel
+from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).parent
@@ -43,7 +44,8 @@ logger = logging.getLogger(__name__)
 INDEXES = {
     "users": [IndexModel([("email", ASCENDING)], name="email", unique=True), IndexModel([("id", ASCENDING)], name="id", unique=True)],
     "transactions": [IndexModel([("id", ASCENDING)], name="id", unique=True), IndexModel([("reference", ASCENDING)], name="reference", unique=True)],
-    "invoices": [IndexModel([("id", ASCENDING)], name="id", unique=True), IndexModel([("transaction_id", ASCENDING)], name="tx")],
+    "invoices": [IndexModel([("id", ASCENDING)], name="id", unique=True), IndexModel([("transaction_id", ASCENDING)], name="tx"),
+                 IndexModel([("payment_tx_hash", ASCENDING)], name="payment_tx_hash", unique=True, partialFilterExpression={"payment_tx_hash": {"$type": "string"}})],
     "audit_logs": [IndexModel([("transaction_id", ASCENDING)], name="tx"), IndexModel([("timestamp", DESCENDING)], name="ts")],
     "notifications": [IndexModel([("user_id", ASCENDING), ("created_at", DESCENDING)], name="user_ts")],
     "uploaded_reports": [IndexModel([("id", ASCENDING)], name="id", unique=True), IndexModel([("transaction_id", ASCENDING)], name="tx")],
@@ -802,21 +804,28 @@ async def verify_onboarding_payment(inv: dict, tx: dict, user: dict, h: str, wal
     need(bool(forensics.TX_HASH.fullmatch(h)), "Transaction hash must be 0x followed by 64 hex characters")
     need(not await db.invoices.find_one({"payment_tx_hash": h.lower()}, {"_id": 1}), "This transaction has already been used for a payment")
     try:
-        chk = await forensics.verify_payment(h, wallet, inv["amount"])
+        chk = await forensics.verify_payment(h, wallet, inv["amount"], datetime.fromisoformat(inv["issued_at"]))
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
         logger.error("payment verification failed: %s", e)
         raise HTTPException(503, "Couldn't reach Etherscan to check the payment — try again shortly")
     ts = now()
-    await db.invoices.update_one({"id": inv["id"]}, {"$set": {
-        "status": "Paid", "submitted_at": ts, "paid_at": ts, "payment_ref": h, "payment_tx_hash": h.lower(), "payment_to": wallet,
-        "payment_from": chk["from"], "payment_block": chk["block"], "verified_onchain": True}})
+    party_wallet = tx["onboarding"][inv["party"]]["data"].get("wallet_address", "")
+    from_match = chk["from"].lower() == party_wallet.lower()
+    try:
+        res = await db.invoices.update_one({"id": inv["id"], "status": "Unpaid"}, {"$set": {
+            "status": "Paid", "submitted_at": ts, "paid_at": ts, "payment_ref": h, "payment_tx_hash": h.lower(), "payment_to": wallet,
+            "payment_from": chk["from"], "payment_from_matches": from_match, "payment_block": chk["block"], "verified_onchain": True}})
+    except DuplicateKeyError:
+        raise HTTPException(400, "This transaction has already been used for a payment")
+    need(res.modified_count == 1, "This invoice is not waiting for payment")
     await db.transactions.update_one({"id": tx["id"]}, {"$set": {
         f"onboarding_fees.{inv['party']}.submitted_at": ts, f"onboarding_fees.{inv['party']}.confirmed_at": ts,
         f"onboarding_fees.{inv['party']}.tx_hash": h}})
     await notify(tx, ["admin"], f"Onboarding fee verified — {inv['invoice_number']}",
-                 f"{tx['reference']}: {inv['party']} paid {eth(chk['value_eth'])} on-chain (block {chk['block']}).")
+                 f"{tx['reference']}: {inv['party']} paid {eth(chk['value_eth'])} on-chain (block {chk['block']})"
+                 + ("" if from_match else f" — note: sent from {chk['from']}, not the party's registered wallet") + ".")
     await log(tx, user, f"Onboarding fee verified on-chain for {inv['invoice_number']}", f"{h} — {eth(chk['value_eth'])} from {chk['from']}")
 
 

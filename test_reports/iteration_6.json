@@ -1,0 +1,41 @@
+{
+  "summary": "Tested the onboarding-fee pay-to wallet feature end to end, in the API (new pytest file, 8/8 passing) and in the UI (Playwright). Admin settings: invalid wallets return 400 and show an error toast, a valid wallet saves (whitespace is trimmed), saving only the amount keeps the wallet, a sender PUT returns 403, GET returns {amount_eth, wallet}, and parties see fee-wallet-value read-only. With no wallet set, the party sees fee-wallet-missing and /pay returns 400 'The admin hasn't set the payment wallet yet'. On-chain verification works on mainnet: the given tx 0xd75f… marked VB-INV-2026-0009 (deal 002) Paid with verified_onchain=true, payment_from=0x6560…7328, payment_block set, and onboarding_fees.sender submitted_at, confirmed_at and tx_hash set. The Payments row shows the 'Verified on-chain' Etherscan link. Negative cases all pass: bad format -> 400, unknown hash -> 400 'not found', fee 0.5 ETH > tx value -> 400 'This transaction sent 0.0134 ETH; the fee is 0.5 ETH', reusing the hash (also in upper case) -> 400 'already been used'. Manual path: Payment Sent -> step 4. Approve marks it Paid, and the admin Confirm button on Payments also works (UI). The escrow-fee (engagement) invoice still pays with no body (Payment Sent, step 10). UI on deal 003: copy button, verify button disabled while empty, bad-format and reused-hash error toasts, and a real verify with a second mainnet tx 0x7ed4… (exactly 0.01 ETH) -> 'Payment verified on-chain'. The recipient's 'I've paid' -> admin Confirm -> Approve both -> step 5. No functional bugs found. There is one security gap in the design.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/invoices/{id}/pay (verify_onboarding_payment / forensics.verify_payment)", "issue": "A party can claim ANY past transaction to the fee wallet. There is no check that the tx was mined after the invoice was issued, and no check that tx.from matches the party's wallet. Both test hashes are old txs sent by strangers to a public address, and both were accepted. Anyone who can see the admin wallet on Etherscan can copy another payer's hash (or a deposit that has nothing to do with the app) to get approved without paying. Fix: require the tx block timestamp to be >= invoice.issued_at, and optionally require from == onboarding.<party>.data.wallet_address or show a warning to the admin.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "verify_onboarding_payment", "issue": "The duplicate-hash check is find_one followed by update, with no unique index on invoices.payment_tx_hash. Two requests sent at the same time can reuse one hash. Add a unique sparse index."},
+      {"endpoint": "PUT /api/onboarding-fee", "issue": "Once a wallet is set the admin can't clear it: an empty string fails validation and the UI drops an empty wallet. Probably acceptable."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Payments OnboardingFee (non-admin view)", "issue": "onboarding-fee-value uses ethFmt(v, 2), so a 0.01 fee showed as '0.00 ETH'. The 'Send exactly {fee}' text in OnboardingPay also uses 2 decimals, so a fee like 0.015 would show as 0.02 (wrong amount to send). Use more decimals for the fee.", "selector": "[data-testid=onboarding-fee-value]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Home - party after paying the onboarding fee", "issues": ["The card says 'Nothing to do right now — Waiting for both parties: both parties pay the onboarding fee.' even though this party has already paid. Show 'Your fee is paid; waiting for the other party'.", "While the invoice loads, the card briefly shows 'Nothing to do right now' before 'Pay the onboarding fee' appears."]},
+      {"screen": "Payments - admin Onboarding fee panel", "issues": ["The 42-character wallet is cut off in the 340px side panel's h-8 input, so the admin can't see the full address."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_fee_wallet_onchain.py"],
+  "action_items": [
+    "HIGH: in verify_payment, reject txs mined before invoice.issued_at (fetch the block timestamp via eth_getBlockByNumber), and optionally check tx.from against the party's registered wallet",
+    "Add a unique sparse index on invoices.payment_tx_hash",
+    "Show the fee amount with more than 2 decimals (onboarding-fee-value, the 'Send exactly' line)",
+    "Change the party's 'waiting' text after they pay their own onboarding fee"
+  ],
+  "critical_code_review_comments": [
+    "verify_payment accepts any historical tx to the wallet (see the HIGH issue)",
+    "The Payments page 'Pay' button on an onboarding invoice always takes the manual path (no hash), so it skips on-chain verification. That is OK, but it is inconsistent with Home",
+    "server.py is about 1146 lines and should be split"
+  ],
+  "updated_files": ["/app/backend/tests/test_fee_wallet_onchain.py"],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% of tested flows"},
+  "test_credentials": "admin@vaultbridge.demo / AdminDemo#2026. Created TEST users (password TestPass#2026): test_fwa_s_6db665, test_fwa_r_6db665, test_fwb_s_6db665, test_fwb_r_6db665 @resend.dev",
+  "seed_data_creation": "Deals VB-ETH-2026-002 (test A, now at step 10 with the escrow fee Payment Sent; it holds the real hash 0xd75f…) and VB-ETH-2026-003 (test B, step 5; it holds hash 0x7ed4…). There is no delete endpoint, so both deals remain. VB-ETH-2026-001 not touched, /admin/reset not called. Onboarding fee restored to 2 ETH. The wallet is still set to 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045 (main agent will clear it).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with -n 0. The test file keeps state in /tmp/feewallet_state.json; test_02 needs NO wallet set, so run test_01+02 first and the rest afterwards. Each mainnet hash can be used only once across the whole DB. Both known hashes (0xd75f…, 0x7ed4…) are now used, so to rerun the verify-success test, delete those invoices' payment_tx_hash or find a new tx to the wallet (see the approach in /tmp/find_tx.py, which uses forensics._call txlist). Fast UI auth: set localStorage vb_token and vb_tx."
+}
