@@ -19,9 +19,10 @@ const KIND = { engagement: "Escrow fee", onboarding: "Onboarding fee" };
 
 const OnboardingFee = ({ isAdmin }) => {
   const [v, setV] = useState("");
-  useEffect(() => { api.get("/onboarding-fee").then((r) => setV(r.data.amount_eth)); }, []);
+  const [w, setW] = useState("");
+  useEffect(() => { api.get("/onboarding-fee").then((r) => { setV(r.data.amount_eth); setW(r.data.wallet || ""); }); }, []);
   const save = async () => {
-    try { await api.put("/onboarding-fee", { amount_eth: Number(v) }); toast.success("Onboarding fee saved"); } catch (e) { toast.error(errMsg(e)); }
+    try { await api.put("/onboarding-fee", { amount_eth: Number(v), ...(w.trim() ? { wallet: w.trim() } : {}) }); toast.success("Onboarding fee saved"); } catch (e) { toast.error(errMsg(e)); }
   };
   return (
     <Panel title="Onboarding fee" sub="Paid by each party when they join" testid="onboarding-fee-config" actions={isAdmin && <Button size="sm" data-testid="onboarding-fee-save" onClick={save}>Save</Button>}>
@@ -30,7 +31,12 @@ const OnboardingFee = ({ isAdmin }) => {
         {isAdmin ? <Input type="number" min="0" step="0.1" data-testid="onboarding-fee-input" value={v} onChange={(e) => setV(e.target.value)} className="h-8 w-32 bg-[#0B111E] text-right font-mono text-xs" />
           : <span data-testid="onboarding-fee-value" className="font-mono text-sm">{ethFmt(v, 2)}</span>}
       </div>
-      {isAdmin && <p className="mt-2 text-[11px] text-slate-500">Applies to parties who join after you save.</p>}
+      <div className="mt-3 space-y-1.5">
+        <span className="text-sm text-white">Pay-to wallet</span>
+        {isAdmin ? <Input data-testid="fee-wallet-input" value={w} onChange={(e) => setW(e.target.value)} placeholder="0x… your receiving wallet" className="h-8 bg-[#0B111E] font-mono text-xs" />
+          : <div data-testid="fee-wallet-value" className="break-all font-mono text-xs text-slate-300">{w || "Not set yet"}</div>}
+      </div>
+      {isAdmin && <p className="mt-2 text-[11px] text-slate-500">The amount applies to parties who join after you save. Parties send the fee to this wallet.</p>}
     </Panel>
   );
 };
@@ -94,7 +100,10 @@ const Row = ({ inv, user, run }) => (
     <TableCell className="max-w-[240px] text-xs text-slate-300">{inv.items.map((l) => l.description).join(", ")}</TableCell>
     <TableCell className="font-mono text-xs">{amt(inv)}</TableCell>
     <TableCell className="text-xs">{inv.responsible_name}<div className="text-slate-500">{cap(inv.party)}</div></TableCell>
-    <TableCell><StatusPill status={inv.status} testid={`invoice-status-${inv.invoice_number}`} /></TableCell>
+    <TableCell>
+      <StatusPill status={inv.status} testid={`invoice-status-${inv.invoice_number}`} />
+      {inv.verified_onchain && <a data-testid={`invoice-tx-${inv.invoice_number}`} href={`https://etherscan.io/tx/${inv.payment_tx_hash}`} target="_blank" rel="noreferrer" className="mt-1 block text-[10px] text-emerald-300 underline">Verified on-chain</a>}
+    </TableCell>
     <TableCell className="text-xs text-slate-400">{dt(inv.issued_at)}</TableCell>
     <TableCell className="text-xs text-slate-400">{dt(inv.paid_at)}</TableCell>
     <TableCell>

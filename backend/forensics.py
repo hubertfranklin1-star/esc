@@ -78,6 +78,27 @@ async def _call(http: httpx.AsyncClient, module: str, action: str, **params):
     return []
 
 
+TX_HASH = re.compile(r"^0x[0-9a-fA-F]{64}$")
+
+
+async def verify_payment(tx_hash: str, to_addr: str, min_eth: float) -> dict:
+    async with httpx.AsyncClient(timeout=20) as http:
+        t = await _call(http, "proxy", "eth_getTransactionByHash", txhash=tx_hash)
+        if not isinstance(t, dict):
+            raise ValueError("Transaction not found on Ethereum mainnet")
+        if (t.get("to") or "").lower() != to_addr.lower():
+            raise ValueError("This transaction was not sent to the escrow fee wallet")
+        value = int(t["value"], 16) / 1e18
+        if value + 1e-9 < min_eth:
+            raise ValueError(f"This transaction sent {value:.4f} ETH; the fee is {min_eth:g} ETH")
+        if not t.get("blockNumber"):
+            raise ValueError("The transaction is still pending — try again once it's mined")
+        rc = await _call(http, "proxy", "eth_getTransactionReceipt", txhash=tx_hash)
+        if not isinstance(rc, dict) or rc.get("status") != "0x1":
+            raise ValueError("This transaction failed on-chain")
+    return {"from": t["from"], "value_eth": value, "block": int(t["blockNumber"], 16)}
+
+
 async def load_ofac(http: httpx.AsyncClient) -> set:
     if _ofac["set"] and time.time() - _ofac["loaded_at"] < 6 * 3600:
         return _ofac["set"]

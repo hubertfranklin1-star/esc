@@ -733,21 +733,32 @@ async def onboarding_fee_eth() -> float:
     return doc["amount_eth"] if doc else 2.0
 
 
+async def fee_wallet() -> str:
+    doc = await db.settings.find_one({"key": "onboarding_fee"})
+    return (doc or {}).get("wallet", "")
+
+
 class OnboardingFeeIn(BaseModel):
     amount_eth: float
+    wallet: Optional[str] = None
 
 
 @api.get("/onboarding-fee")
 async def get_onboarding_fee(user: dict = Depends(current_user)):
-    return {"amount_eth": await onboarding_fee_eth()}
+    return {"amount_eth": await onboarding_fee_eth(), "wallet": await fee_wallet()}
 
 
 @api.put("/onboarding-fee")
 async def put_onboarding_fee(body: OnboardingFeeIn, user: dict = Depends(admin_user)):
     need(0 < body.amount_eth <= 1000, "Onboarding fee must be more than 0 and at most 1,000 ETH")
-    await db.settings.update_one({"key": "onboarding_fee"}, {"$set": {"amount_eth": body.amount_eth}}, upsert=True)
-    await log(None, user, "Onboarding fee updated", eth(body.amount_eth))
-    return {"amount_eth": body.amount_eth}
+    sets = {"amount_eth": body.amount_eth}
+    if body.wallet is not None:
+        w = body.wallet.strip()
+        need(forensics.valid(w), "Payment wallet must be 0x followed by 40 hex characters")
+        sets["wallet"] = w
+    await db.settings.update_one({"key": "onboarding_fee"}, {"$set": sets}, upsert=True)
+    await log(None, user, "Onboarding fee updated", eth(body.amount_eth) + (f" — pay to {sets['wallet']}" if "wallet" in sets else ""))
+    return {"amount_eth": body.amount_eth, "wallet": await fee_wallet()}
 
 
 async def make_invoice(tx: dict, party: str, fee_items: List[dict], kind: str, user: Optional[dict] = None, currency: str = "USD") -> dict:
@@ -783,15 +794,50 @@ async def load_invoice(inv_id: str, user: dict) -> dict:
     return inv
 
 
+class PayIn(BaseModel):
+    tx_hash: str = ""
+
+
+async def verify_onboarding_payment(inv: dict, tx: dict, user: dict, h: str, wallet: str):
+    need(bool(forensics.TX_HASH.fullmatch(h)), "Transaction hash must be 0x followed by 64 hex characters")
+    need(not await db.invoices.find_one({"payment_tx_hash": h.lower()}, {"_id": 1}), "This transaction has already been used for a payment")
+    try:
+        chk = await forensics.verify_payment(h, wallet, inv["amount"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error("payment verification failed: %s", e)
+        raise HTTPException(503, "Couldn't reach Etherscan to check the payment — try again shortly")
+    ts = now()
+    await db.invoices.update_one({"id": inv["id"]}, {"$set": {
+        "status": "Paid", "submitted_at": ts, "paid_at": ts, "payment_ref": h, "payment_tx_hash": h.lower(), "payment_to": wallet,
+        "payment_from": chk["from"], "payment_block": chk["block"], "verified_onchain": True}})
+    await db.transactions.update_one({"id": tx["id"]}, {"$set": {
+        f"onboarding_fees.{inv['party']}.submitted_at": ts, f"onboarding_fees.{inv['party']}.confirmed_at": ts,
+        f"onboarding_fees.{inv['party']}.tx_hash": h}})
+    await notify(tx, ["admin"], f"Onboarding fee verified — {inv['invoice_number']}",
+                 f"{tx['reference']}: {inv['party']} paid {eth(chk['value_eth'])} on-chain (block {chk['block']}).")
+    await log(tx, user, f"Onboarding fee verified on-chain for {inv['invoice_number']}", f"{h} — {eth(chk['value_eth'])} from {chk['from']}")
+
+
 @api.post("/invoices/{inv_id}/pay")
-async def pay_invoice(inv_id: str, user: dict = Depends(current_user)):
+async def pay_invoice(inv_id: str, body: Optional[PayIn] = None, user: dict = Depends(current_user)):
     inv = await load_invoice(inv_id, user)
     need(user["id"] == inv["responsible_user_id"], "Only the billed party can pay this invoice")
     need(inv["status"] == "Unpaid", "This invoice is not waiting for payment")
     tx = await load_tx(inv["transaction_id"], user)
     need(not tx.get("on_hold"), "This deal is on hold")
+    h = (body.tx_hash if body else "").strip()
+    wallet = ""
+    if inv["kind"] == "onboarding":
+        wallet = await fee_wallet()
+        need(bool(wallet), "The admin hasn't set the payment wallet yet")
+        if h:
+            await verify_onboarding_payment(inv, tx, user, h, wallet)
+            return await load_invoice(inv_id, user)
     ts = now()
-    await db.invoices.update_one({"id": inv_id}, {"$set": {"status": "Payment Sent", "submitted_at": ts, "payment_ref": "PAY-" + secrets.token_hex(4).upper()}})
+    await db.invoices.update_one({"id": inv_id}, {"$set": {"status": "Payment Sent", "submitted_at": ts, "payment_to": wallet,
+                                                         "payment_ref": "PAY-" + secrets.token_hex(4).upper()}})
     if inv["kind"] == "engagement":
         await db.transactions.update_one({"id": tx["id"]}, {"$set": {"payment.submitted_at": ts}})
     if inv["kind"] == "onboarding":

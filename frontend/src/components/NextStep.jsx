@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { CheckCircle2, Hourglass, Shuffle } from "lucide-react";
+import { CheckCircle2, Copy, Hourglass, Shuffle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -90,6 +90,36 @@ const call = async (fn, ok, refresh) => {
   try { await fn(); toast.success(ok); await refresh(); } catch (e) { toast.error(errMsg(e)); }
 };
 
+const OnboardingPay = ({ inv, refresh }) => {
+  const [wallet, setWallet] = useState(null);
+  const [hash, setHash] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.get("/onboarding-fee").then((r) => setWallet(r.data.wallet || "")); }, []);
+  if (wallet === null) return null;
+  if (!wallet) return <p data-testid="fee-wallet-missing" className="text-sm text-amber-300">The admin hasn't set the payment wallet yet. You'll be able to pay as soon as it's added.</p>;
+  const pay = async (body, ok) => { setBusy(true); await call(() => api.post(`/invoices/${inv.id}/pay`, body), ok, refresh); setBusy(false); };
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-sky-400/40 bg-sky-400/5 p-4">
+        <div className="eyebrow mb-2">Send exactly {fee(inv)} on Ethereum mainnet to</div>
+        <div className="flex items-center gap-2">
+          <code data-testid="fee-wallet-address" className="break-all font-mono text-sm text-white">{wallet}</code>
+          <Button size="sm" variant="outline" data-testid="fee-wallet-copy" onClick={() => { navigator.clipboard?.writeText(wallet); toast.success("Wallet address copied"); }}><Copy className="h-3.5 w-3.5" /></Button>
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <Label>Transaction hash</Label>
+        <Input data-testid="fee-tx-hash-input" value={hash} onChange={(e) => setHash(e.target.value.trim())} placeholder="0x… (64 characters)" className="bg-[#0B111E] font-mono text-xs" />
+        <p className="text-[11px] text-slate-500">Paste it after sending; we check it on Etherscan and mark the fee paid straight away.</p>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button data-testid="fee-verify-button" disabled={busy || !hash} onClick={() => pay({ tx_hash: hash }, "Payment verified on-chain")}>{busy ? "Checking…" : "Verify payment"}</Button>
+        <Button variant="outline" data-testid="pay-onboarding-button" disabled={busy} onClick={() => pay({}, "Marked as paid — the admin will confirm")}>I've paid — admin will confirm</Button>
+      </div>
+    </div>
+  );
+};
+
 const PartyStep = ({ tx, party, act, refresh }) => {
   const s = tx.current_step;
   const inv = useFeeInvoice(tx);
@@ -107,7 +137,7 @@ const PartyStep = ({ tx, party, act, refresh }) => {
   if (s <= 3 && obInv && !of.submitted_at)
     return (
       <Card title="Pay the onboarding fee" text="Because of the size of this deal, each party pays an onboarding fee to open their escrow account. Both parties must pay before the admin can approve.">
-        <InvoiceBox inv={obInv}><Button data-testid="pay-onboarding-button" onClick={() => call(() => api.post(`/invoices/${obInv.id}/pay`), "Onboarding fee paid", refresh)}>Pay {fee(obInv)}</Button></InvoiceBox>
+        <InvoiceBox inv={obInv}><OnboardingPay inv={obInv} refresh={refresh} /></InvoiceBox>
       </Card>
     );
   if (party === "sender" && s === 5)
