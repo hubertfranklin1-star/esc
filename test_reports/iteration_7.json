@@ -1,0 +1,44 @@
+{
+  "summary": "Tested the 50/50 escrow fee split and the launch cleanup end to end, in the API (new pytest file, 11/11 passing on the second run) and in the UI (Playwright, full flow on deal VB-ETH-2026-004 from step 5 to Completed). Working: the login page has no admin demo card and the admin can sign in by typing credentials; the sidebar has no DEMO badge; Settings has no Reset panel and shows the live-pricing text; Home shows Escrow wallet, Held in escrow and Release to; new deals use the live ETH price ($2,243); join rejects invalid or empty wallets. Approve returns 400 when no pay-to wallet is set, and once set, escrow_vault_address equals the wallet. The deposit card shows the admin wallet. An unknown hash gives the toast 'Transaction not found', and a bad format, too small an amount or the wrong recipient each return 400. 'I've sent it' sets the status to 'Deposit awaiting confirmation', and the admin's 'Deposit received — complete AML checks' sets confirmed_at and moves to step 7. The recipient's request creates 2 ETH engagement invoices of $1,312,500 each (585.0234 ETH at $2,243.50) and sets settlement_fee_price.eth_usd. In step 9 both parties see the FeeSplit and share-* controls. After the sender pays manually, the recipient and admin see 'Paid · awaiting confirmation'; admin Confirm on Payments changes it to 'Paid · confirmed'. The Payments fee rows say 'Split 50/50 — sender & recipient'. After both pay, step 10 shows the ReleaseCard, and Release completes the deal with both invoices Paid. Decline goes back to step 8 and cancels both share invoices. With tiny fees, verifying a share with an old mainnet tx returns 400 'sent before this payment was requested', and bad-format and unknown hashes are rejected. The final PDF has the Sender/Recipient 50% fee share rows, and the AML PDF has Sender wallet screening (risk 25/100). Problems: an Etherscan rate-limit bug in verify_payment, a stale stepper label, and a design gap where the admin can release before confirming manual payments.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/invoices/{id}/pay and deposit tx_hash (forensics.verify_payment)", "issue": "Flaky: 1 of 2 runs returned 503 when another check ran right after (backend log: 'payment verification failed: string indices must be integers, not str'). In _call, proxy-module responses go back as body['result'] with no rate-limit check or retry. When Etherscan returns a rate-limit string instead of a dict, eth_getBlockByNumber fails (blk['timestamp'] crashes, giving 503). Worse, a string from eth_getTransactionByHash gives the false error 'Transaction not found', and a string from eth_getTransactionReceipt gives 'This transaction failed on-chain'. It is most likely while the auto wallet scans are running. Fix: in _call, when module=='proxy' and result is a str containing 'rate limit' (or body has status '0'), sleep and retry like the other calls."},
+      {"endpoint": "deposit with tx_hash", "issue": "The amount error reuses the fee message: 'This transaction sent 0.0037 ETH; the fee is 4.45818 ETH'. For a deposit it should say 'the deposit is …'."},
+      {"endpoint": "POST /api/admin/reset", "issue": "The UI button is gone but the endpoint still exists. Any admin can wipe all transactions, invoices and settings with it. Remove it or protect it before launch."},
+      {"endpoint": "new_transaction", "issue": "Still writes the fake fields sender_wallet_balance (qty+125.5) and recipient_wallet_balance, and keeps the ETH_PRICE=2350 default and the sim_address/sim_hash helpers. These are dead or fake data."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Stepper.jsx", "issue": "Step 9 short label is still 'Withdrawal AML'. It should be 'Escrow fees' (the step is now 'Both parties pay their half of the escrow fees').", "selector": "components/Stepper.jsx SHORT[8]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Admin step 10 ReleaseCard", "issues": ["The text says 'Both halves of the escrow fees are paid' even when a half is only 'Paid · awaiting confirmation' (party clicked I've paid, admin never confirmed). Release then marks both invoices Paid automatically. Suggest a warning, or blocking release until each share is confirmed or verified on-chain."]},
+      {"screen": "Settings.jsx", "issues": ["Dead code left over: the reset() function and an unreachable ConfirmDialog 'Reset the demo?' are still in the component."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_fee_split_launch.py", "/app/test_reports/pytest/fee_split.xml"],
+  "action_items": [
+    "Handle Etherscan rate-limit responses for proxy calls in forensics._call (retry), and check that blk is a dict in verify_payment",
+    "Rename stepper label 9 'Withdrawal AML' to 'Escrow fees'",
+    "Use deposit-specific wording in the verify_payment amount error",
+    "Decide whether release should require each share to be confirmed or verified; at least correct the ReleaseCard text",
+    "Remove or lock down POST /api/admin/reset and the dead reset code in Settings.jsx",
+    "Remove the leftover fake sender_wallet_balance/recipient_wallet_balance fields"
+  ],
+  "critical_code_review_comments": [
+    "release decline: if one party already verified its share on-chain (invoice Paid), the decline wipes settlement_fees and the next request issues new invoices. The party has to pay again and the earlier payment is not linked anywhere. Consider carrying the paid share over, or refunding.",
+    "approve_parties sets onboarding fee invoices to Paid even when they are only 'Payment Sent' (the manual claim was never confirmed). Same trust gap as release.",
+    "server.py is 1186 lines. Split it into routers (auth, transactions/actions, invoices, reports, forensics).",
+    "run_action is a ~170-line if/elif chain. A dispatch map of handlers would be easier to maintain."
+  ],
+  "updated_files": ["/app/backend/tests/test_fee_split_launch.py"],
+  "success_rate": {"backend": "100% (11/11 on rerun; 1 flaky Etherscan 503 seen on the first run)", "frontend": "95% (all flows work; stale stepper label)"},
+  "flaky_tests": ["test_09 share verify: 503 from Etherscan rate limit in 1 of 2 runs (root cause in forensics._call proxy handling)"],
+  "seed_data_creation": "Created test deals VB-ETH-2026-002 (e88085a6-5cc7-4992-9073-f0e301899df0), -003 (ff38faa4-d0cc-4d74-b824-ac61b8ea912c) and -004 (c9e16c03-ece4-41f2-bb6e-ab2e95dc8d90), all Completed, with users test_s_4813db48/test_r_4813db48, test_s_bea95243/test_r_bea95243 and test_s_3b8acc38/test_r_3b8acc38 @resend.dev, plus their invoices and forensic uploads. The pay-to wallet is still set to 0xd8dA…6045 (main agent will clear it). Fees restored to 1500000/75000/150000/600000/300000 (party recipient) and onboarding fee to 6.5 ETH; amounts are now stored as floats. VB-ETH-2026-001 not touched; /api/admin/reset not called.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: export REACT_APP_BACKEND_URL=...; pytest -n 0 -p no:randomly tests/test_fee_split_launch.py. Each run creates a new deal and restores fees/onboarding fee in teardown. It unsets the pay-to wallet via the DB (no API can clear it) and then sets it to 0xd8dA…6045. Hash 0xd75f… is unused again (DB was cleaned) but mined before any new invoice, so it is rejected as 'sent before'. 0x337ee… (0.00369 ETH to the wallet) is used for the 'sent before' check. Use /tmp/find_tx2.py to list txs to the wallet. Fast UI auth: set localStorage vb_token and vb_tx."
+}

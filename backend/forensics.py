@@ -63,7 +63,13 @@ async def _call(http: httpx.AsyncClient, module: str, action: str, **params):
         r.raise_for_status()
         body = r.json()
         if module == "proxy":
-            return body.get("result")
+            res = body.get("result")
+            if isinstance(res, str) and "rate limit" in res.lower() and attempt < 2:
+                await asyncio.sleep(1.2)
+                continue
+            if isinstance(res, str) and not res.startswith("0x"):
+                raise RuntimeError(f"Etherscan: {res}")
+            return res
         if body.get("status") == "1":
             return body["result"]
         msg = str(body.get("result") or body.get("message") or "")
@@ -81,7 +87,7 @@ async def _call(http: httpx.AsyncClient, module: str, action: str, **params):
 TX_HASH = re.compile(r"^0x[0-9a-fA-F]{64}$")
 
 
-async def verify_payment(tx_hash: str, to_addr: str, min_eth: float, not_before: datetime) -> dict:
+async def verify_payment(tx_hash: str, to_addr: str, min_eth: float, not_before: datetime, what: str = "fee") -> dict:
     async with httpx.AsyncClient(timeout=20) as http:
         t = await _call(http, "proxy", "eth_getTransactionByHash", txhash=tx_hash)
         if not isinstance(t, dict):
@@ -90,7 +96,7 @@ async def verify_payment(tx_hash: str, to_addr: str, min_eth: float, not_before:
             raise ValueError(f"This transaction was not sent to {to_addr}")
         value = int(t["value"], 16) / 1e18
         if value + 1e-9 < min_eth:
-            raise ValueError(f"This transaction sent {value:.4f} ETH; the fee is {min_eth:g} ETH")
+            raise ValueError(f"This transaction sent {value:.4f} ETH; the {what} is {min_eth:g} ETH")
         if not t.get("blockNumber"):
             raise ValueError("The transaction is still pending — try again once it's mined")
         rc = await _call(http, "proxy", "eth_getTransactionReceipt", txhash=tx_hash)

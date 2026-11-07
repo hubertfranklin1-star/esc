@@ -107,14 +107,6 @@ def new_id() -> str:
     return str(uuid.uuid4())
 
 
-def sim_address() -> str:
-    return "0x" + secrets.token_hex(20)
-
-
-def sim_hash() -> str:
-    return "0x" + secrets.token_hex(32)
-
-
 def money(v: float) -> str:
     return f"${v:,.2f}"
 
@@ -351,8 +343,7 @@ async def new_transaction(reference: str, usd_value: float, sender_name: str, re
         "eth_quantity": qty, "network": network, "sender_name": sender_name, "recipient_name": recipient_name,
         "sender_user_id": sender["id"], "recipient_user_id": recipient["id"],
         "sender_email": sender["email"], "recipient_email": recipient["email"],
-        "escrow_vault_address": None, "sender_wallet_balance": round(qty + 125.5, 6),
-        "recipient_wallet_balance": 0.0, "created_at": now(), "invitations_sent_at": None,
+        "escrow_vault_address": None, "created_at": now(), "invitations_sent_at": None,
         "invite_emails": {"sender": sender["email"], "recipient": recipient["email"]},
         "invitations": {"sender": dict(party), "recipient": dict(party)},
         "onboarding": {"sender": dict(ob), "recipient": dict(ob)},
@@ -575,7 +566,7 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
         dep = {"initiated_at": now(), "from_address": tx["onboarding"]["sender"]["data"]["wallet_address"], "to_address": escrow,
                "eth_quantity": tx["eth_quantity"], "tx_hash": None, "block_number": None, "verified_onchain": False, "confirmed_at": None}
         if h:
-            chk = await chain_check(h, escrow, tx["eth_quantity"], tx["agreement"]["issued_at"])
+            chk = await chain_check(h, escrow, tx["eth_quantity"], tx["agreement"]["issued_at"], "deposit")
             dep.update({"tx_hash": h.lower(), "block_number": chk["block"], "from_address": chk["from"], "verified_onchain": True, "confirmed_at": now()})
         sets["deposit"] = dep
         await notify(tx, ["recipient", "admin"], "ETH deposit sent", f"{tx['reference']}: the sender deposited {eth(tx['eth_quantity'])} into escrow"
@@ -636,9 +627,10 @@ async def run_action(tx_id: str, action: str, body: ActionIn, user: dict = Depen
         need(step == 10, "Both parties must pay their half of the escrow fees first")
         sf = tx["settlement_fees"]
         if d.get("decision") == "approved":
+            need(all(sf[p].get("confirmed_at") for p in ("sender", "recipient")), "Confirm that both fee payments reached your wallet first")
             ts = now()
             h = str(d.get("tx_hash", "")).strip()
-            chk = await chain_check(h, tx["onboarding"]["recipient"]["data"]["wallet_address"], tx["eth_quantity"], tx["settlement"]["requested_at"]) if h else None
+            chk = await chain_check(h, tx["onboarding"]["recipient"]["data"]["wallet_address"], tx["eth_quantity"], tx["settlement"]["requested_at"], "release amount") if h else None
             for p in ("sender", "recipient"):
                 await db.invoices.update_one({"id": sf[p]["invoice_id"], "status": "Payment Sent"}, {"$set": {"status": "Paid", "paid_at": ts}})
                 sets[f"settlement_fees.{p}.confirmed_at"] = sf[p].get("confirmed_at") or ts
@@ -824,11 +816,11 @@ async def hash_used(h: str) -> bool:
                 or await db.transactions.find_one({"$or": [{"deposit.tx_hash": h}, {"settlement.release_tx_hash": h}]}, {"_id": 1}))
 
 
-async def chain_check(h: str, to: str, amount: float, not_before: str) -> dict:
+async def chain_check(h: str, to: str, amount: float, not_before: str, what: str = "fee") -> dict:
     need(bool(forensics.TX_HASH.fullmatch(h)), "Transaction hash must be 0x followed by 64 hex characters")
     need(not await hash_used(h), "This transaction has already been used for a payment")
     try:
-        return await forensics.verify_payment(h, to, amount, datetime.fromisoformat(not_before))
+        return await forensics.verify_payment(h, to, amount, datetime.fromisoformat(not_before), what)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
@@ -1112,15 +1104,6 @@ async def audit(transaction_id: Optional[str] = None, user: dict = Depends(curre
 @api.get("/users")
 async def list_users(user: dict = Depends(admin_user)):
     return [public_user(u) async for u in db.users.find({}, {"_id": 0})]
-
-
-@api.post("/admin/reset")
-async def reset_demo(user: dict = Depends(admin_user)):
-    for c in ("transactions", "invoices", "audit_logs", "notifications", "uploaded_reports", "counters", "settings"):
-        await db[c].delete_many({})
-    await seed_data()
-    await log(None, user, "Demo reset", "All records restored to the starting state")
-    return {"ok": True}
 
 
 # ---------- seed ----------

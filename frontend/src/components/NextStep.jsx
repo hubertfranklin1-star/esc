@@ -280,17 +280,25 @@ const InviteForm = ({ tx }) => {
 
 const ReleaseCard = ({ tx, act }) => {
   const [hash, setHash] = useState("");
+  const { refresh } = useTx();
   const to = tx.onboarding.recipient.data.wallet_address;
+  const sf = tx.settlement_fees;
+  const pending = ["sender", "recipient"].filter((p) => !sf[p].confirmed_at);
   return (
-    <Card title="Release the funds & close the escrow" text={`Both halves of the escrow fees are paid. Send ${ethExact(tx.eth_quantity)} to ${tx.recipient_name}, then record the release.`}>
+    <Card title="Release the funds & close the escrow" text={pending.length ? "Both parties say they've paid their half. Check each payment reached your wallet and confirm it before releasing." : `Both halves of the escrow fees are paid. Send ${ethExact(tx.eth_quantity)} to ${tx.recipient_name}, then record the release.`}>
       <FeeSplit tx={tx} />
+      {pending.length > 0 && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          {pending.map((p) => <Button key={p} variant="outline" data-testid={`release-confirm-${p}`} onClick={() => call(() => api.post(`/invoices/${sf[p].invoice_id}/confirm`), `${p} payment confirmed`, refresh)}>Confirm {p} payment received</Button>)}
+        </div>
+      )}
       <div className="mb-4 space-y-1.5">
         <KV label="Recipient wallet" value={to} mono testid="release-recipient-wallet" />
         <Label>Release transaction hash (optional)</Label>
         <Input data-testid="release-tx-hash-input" value={hash} onChange={(e) => setHash(e.target.value.trim())} placeholder="0x… checked on Etherscan if provided" className="bg-[#0B111E] font-mono text-xs" />
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button data-testid="release-approve-button" onClick={() => act("release", { decision: "approved", tx_hash: hash }, "Funds released — escrow closed")}>Release funds & close</Button>
+        <Button data-testid="release-approve-button" disabled={pending.length > 0} onClick={() => act("release", { decision: "approved", tx_hash: hash }, "Funds released — escrow closed")}>Release funds & close</Button>
         <Button variant="outline" data-testid="release-decline-button" onClick={() => act("release", { decision: "rejected" }, "Release request declined")}>Decline</Button>
       </div>
     </Card>

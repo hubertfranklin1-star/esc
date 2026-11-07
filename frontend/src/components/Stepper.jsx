@@ -1,6 +1,6 @@
 import { Check } from "lucide-react";
 
-const SHORT = ["Sender joins", "Recipient joins", "Onboarding fee", "Approval", "Deposit", "AML checks", "AML report", "Request funds", "Withdrawal AML", "Release"];
+const SHORT = ["Sender joins", "Recipient joins", "Onboarding fee", "Approval", "Deposit", "AML checks", "AML report", "Request funds", "Escrow fees", "Release"];
 
 export const Stepper = ({ tx }) => (
   <ol data-testid="deal-stepper" className="flex gap-1 overflow-x-auto pb-2">
