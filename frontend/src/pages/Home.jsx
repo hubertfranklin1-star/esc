@@ -20,9 +20,9 @@ const Summary = ({ tx }) => {
       <KV label="Sender" value={tx.sender_name} />
       <KV label="Recipient" value={tx.recipient_name} />
       <KV label="Network" value={tx.network} />
-      <KV label="Sender wallet balance" value={ethFmt(tx.sender_wallet_balance, 2)} mono testid="sender-balance" />
+      <KV label="Escrow wallet" value={tx.escrow_vault_address || "Set when the escrow opens"} mono testid="escrow-wallet" />
       <KV label="Held in escrow" value={ethFmt(held, 2)} mono testid="escrow-balance" />
-      <KV label="Recipient wallet balance" value={ethFmt(tx.recipient_wallet_balance, 2)} mono testid="recipient-balance" />
+      {tx.onboarding.recipient.data?.wallet_address && <KV label="Release to" value={tx.onboarding.recipient.data.wallet_address} mono testid="recipient-wallet" />}
     </Panel>
   );
 };

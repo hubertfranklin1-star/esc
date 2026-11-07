@@ -36,16 +36,11 @@ export default function SettingsPage() {
           <KV label="Organisation" value={user.organisation} />
         </Panel>
         <Panel title="Escrow settings" testid="settings-params">
-          <KV label="ETH price" value="$2,350.00" mono />
-          <KV label="Confirmations needed" value="12" mono />
+          <KV label="Deal pricing" value="Live ETH price when a deal is created" />
+          <KV label="Escrow fees" value="Split 50/50, live ETH price" />
           <KV label="Network" value="Ethereum Mainnet" />
           {user.role === "admin" && <Button variant="outline" size="sm" className="mt-3" data-testid="settings-go-fees" onClick={() => nav("/payments")}>Edit fees</Button>}
         </Panel>
-        {user.role === "admin" && (
-          <Panel title="Reset demo" sub="Clears all deals, invoices, messages, files and activity, and starts VB-ETH-2026-001 again." testid="settings-reset" className="lg:col-span-2">
-            <Button variant="destructive" data-testid="reset-demo-button" onClick={() => setOpen(true)} className="gap-1.5"><RotateCcw className="h-4 w-4" /> Reset demo</Button>
-          </Panel>
-        )}
       </div>
       <ConfirmDialog open={open} onOpenChange={setOpen} testid="reset-dialog" title="Reset the demo?" description="Everything is cleared and the starting deal is created again. Accounts are kept."
         checkLabel="I understand all history will be cleared." confirmLabel="Reset demo" onConfirm={reset} />

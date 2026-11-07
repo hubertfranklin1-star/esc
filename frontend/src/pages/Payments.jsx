@@ -49,7 +49,7 @@ const Fees = ({ fees, setFees, isAdmin }) => {
     <Panel title="Fees" testid="fee-config" actions={isAdmin && <Button size="sm" data-testid="fees-save-button" onClick={save}>Save</Button>}>
       {fees.map((f, i) => (
         <div key={f.code} className="flex items-center justify-between gap-3 border-b border-[#26354D]/60 py-2 last:border-0">
-          <div><div className="text-sm text-white">{f.label}</div><div className="text-[11px] text-slate-500">Paid by {f.party}</div></div>
+          <div><div className="text-sm text-white">{f.label}</div><div className="text-[11px] text-slate-500">Split 50/50 — sender & recipient</div></div>
           {isAdmin ? (
             <Input type="number" min="0" data-testid={`fee-input-${f.code}`} value={f.amount} className="h-8 w-36 bg-[#0B111E] text-right font-mono text-xs"
               onChange={(e) => setFees(fees.map((x, j) => (j === i ? { ...x, amount: Number(e.target.value) } : x)))} />

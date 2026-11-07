@@ -38,11 +38,10 @@ export const TxProvider = ({ children }) => {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  const confirming = tx?.deposit?.initiated_at && tx.deposit.confirmations < 12;
   useEffect(() => {
-    const id = setInterval(refresh, confirming ? 1500 : 5000);
+    const id = setInterval(refresh, 5000);
     return () => { clearInterval(id); };
-  }, [refresh, confirming]);
+  }, [refresh]);
 
   const act = async (action, data = {}, success = "Done") => {
     try {

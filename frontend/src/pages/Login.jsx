@@ -9,7 +9,6 @@ import { useAuth } from "@/context/AuthContext";
 import { api, errMsg } from "@/lib/api";
 
 const DEMO = [
-  { role: "Admin", email: "admin@vaultbridge.demo", password: "AdminDemo#2026", org: "VaultBridge Escrow" },
   { role: "Sender", email: "sender@vaultbridge.demo", password: "SenderDemo#2026", org: "Demo Investment Entity" },
   { role: "Recipient", email: "recipient@vaultbridge.demo", password: "RecipientDemo#2026", org: "Demo Acquisition Company" },
 ];

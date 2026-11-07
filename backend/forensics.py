@@ -87,7 +87,7 @@ async def verify_payment(tx_hash: str, to_addr: str, min_eth: float, not_before:
         if not isinstance(t, dict):
             raise ValueError("Transaction not found on Ethereum mainnet")
         if (t.get("to") or "").lower() != to_addr.lower():
-            raise ValueError("This transaction was not sent to the escrow fee wallet")
+            raise ValueError(f"This transaction was not sent to {to_addr}")
         value = int(t["value"], 16) / 1e18
         if value + 1e-9 < min_eth:
             raise ValueError(f"This transaction sent {value:.4f} ETH; the fee is {min_eth:g} ETH")
@@ -99,8 +99,14 @@ async def verify_payment(tx_hash: str, to_addr: str, min_eth: float, not_before:
         blk = await _call(http, "proxy", "eth_getBlockByNumber", tag=t["blockNumber"], boolean="false")
         mined = datetime.fromtimestamp(int(blk["timestamp"], 16), timezone.utc)
         if mined < not_before:
-            raise ValueError("This transaction was sent before your invoice was issued — send a new payment and paste its hash")
+            raise ValueError("This transaction was sent before this payment was requested — send a new payment and paste its hash")
     return {"from": t["from"], "value_eth": value, "block": int(t["blockNumber"], 16), "mined_at": mined.isoformat()}
+
+
+async def eth_price() -> float:
+    async with httpx.AsyncClient(timeout=15) as http:
+        r = await _call(http, "stats", "ethprice")
+    return float(r["ethusd"])
 
 
 async def load_ofac(http: httpx.AsyncClient) -> set:

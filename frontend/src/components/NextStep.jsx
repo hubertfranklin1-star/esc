@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { CheckCircle2, Copy, Hourglass, Shuffle } from "lucide-react";
+import { CheckCircle2, Copy, Hourglass } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,13 +9,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { KV } from "@/components/common";
 import { AgreementTerms } from "@/components/AgreementTerms";
-import { Confirmations } from "@/components/DepositTracker";
 import { useTx } from "@/context/TxContext";
 import { useAuth } from "@/context/AuthContext";
 import { api, errMsg, download } from "@/lib/api";
 import { usd, ethFmt, ethExact } from "@/lib/fmt";
 
-const newWallet = () => "0x" + Array.from(crypto.getRandomValues(new Uint8Array(20))).map((b) => b.toString(16).padStart(2, "0")).join("");
 const WHO = { admin: "the admin", sender: "the sender", recipient: "the recipient", both: "both parties" };
 
 const Card = ({ title, text, children, done }) => (
@@ -35,7 +33,7 @@ const Card = ({ title, text, children, done }) => (
 const JoinForm = ({ tx, party, act }) => {
   const prev = tx.onboarding[party].data || {};
   const { user } = useAuth();
-  const [f, setF] = useState({ legal_name: prev.legal_name || tx[`${party}_name`], contact_name: prev.contact_name || user?.name || "", contact_email: prev.contact_email || tx[`${party}_email`], wallet_address: prev.wallet_address || newWallet() });
+  const [f, setF] = useState({ legal_name: prev.legal_name || tx[`${party}_name`], contact_name: prev.contact_name || user?.name || "", contact_email: prev.contact_email || tx[`${party}_email`], wallet_address: prev.wallet_address || "" });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const field = (k, label) => (
     <div className="space-y-1.5"><Label>{label}</Label><Input data-testid={`join-${k}-input`} value={f[k]} onChange={set(k)} className="bg-[#0B111E]" /></div>
@@ -47,11 +45,9 @@ const JoinForm = ({ tx, party, act }) => {
         {field("contact_name", "Your full name")}
         {field("contact_email", "Email")}
         <div className="space-y-1.5">
-          <Label>ETH wallet address</Label>
-          <div className="flex gap-2">
-            <Input data-testid="join-wallet_address-input" value={f.wallet_address} onChange={set("wallet_address")} className="bg-[#0B111E] font-mono text-xs" />
-            <Button type="button" variant="outline" title="New address" data-testid="join-generate-wallet" onClick={() => setF({ ...f, wallet_address: newWallet() })}><Shuffle className="h-4 w-4" /></Button>
-          </div>
+          <Label>Your ETH wallet address</Label>
+          <Input data-testid="join-wallet_address-input" value={f.wallet_address} onChange={set("wallet_address")} placeholder="0x… a wallet you control" className="bg-[#0B111E] font-mono text-xs" />
+          <p className="text-[11px] text-slate-500">{party === "recipient" ? "The escrow funds are released to this wallet — double-check it." : "Send the deposit from this wallet."}</p>
         </div>
       </div>
       <AgreementTerms tx={tx} />
@@ -73,7 +69,6 @@ const useInvoice = (tx, id, stamp) => {
   }, [tx.id, id, stamp]);
   return inv;
 };
-const useFeeInvoice = (tx) => useInvoice(tx, tx.payment.invoice_id, tx.payment.submitted_at);
 const fee = (inv, v = inv.amount) => (inv.currency === "ETH" ? ethExact(v) : usd(v));
 
 const InvoiceBox = ({ inv, children }) => (
@@ -90,39 +85,69 @@ const call = async (fn, ok, refresh) => {
   try { await fn(); toast.success(ok); await refresh(); } catch (e) { toast.error(errMsg(e)); }
 };
 
-const OnboardingPay = ({ inv, refresh }) => {
-  const [wallet, setWallet] = useState(null);
+const PayBox = ({ amount, wallet, onPay, manualLabel, prefix = "fee" }) => {
   const [hash, setHash] = useState("");
   const [busy, setBusy] = useState(false);
-  useEffect(() => { api.get("/onboarding-fee").then((r) => setWallet(r.data.wallet || "")); }, []);
-  if (wallet === null) return null;
-  if (!wallet) return <p data-testid="fee-wallet-missing" className="text-sm text-amber-300">The admin hasn't set the payment wallet yet. You'll be able to pay as soon as it's added.</p>;
-  const pay = async (body, ok) => { setBusy(true); await call(() => api.post(`/invoices/${inv.id}/pay`, body), ok, refresh); setBusy(false); };
+  const pay = async (body) => { setBusy(true); await onPay(body); setBusy(false); };
   return (
     <div className="space-y-4">
       <div className="rounded-md border border-sky-400/40 bg-sky-400/5 p-4">
-        <div className="eyebrow mb-2">Send exactly {fee(inv)} on Ethereum mainnet to</div>
+        <div className="eyebrow mb-2">Send exactly {amount} on Ethereum mainnet to</div>
         <div className="flex items-center gap-2">
-          <code data-testid="fee-wallet-address" className="break-all font-mono text-sm text-white">{wallet}</code>
-          <Button size="sm" variant="outline" data-testid="fee-wallet-copy" onClick={() => { navigator.clipboard?.writeText(wallet); toast.success("Wallet address copied"); }}><Copy className="h-3.5 w-3.5" /></Button>
+          <code data-testid={`${prefix}-wallet-address`} className="break-all font-mono text-sm text-white">{wallet}</code>
+          <Button size="sm" variant="outline" data-testid={`${prefix}-wallet-copy`} onClick={() => { navigator.clipboard?.writeText(wallet); toast.success("Wallet address copied"); }}><Copy className="h-3.5 w-3.5" /></Button>
         </div>
       </div>
       <div className="space-y-1.5">
         <Label>Transaction hash</Label>
-        <Input data-testid="fee-tx-hash-input" value={hash} onChange={(e) => setHash(e.target.value.trim())} placeholder="0x… (64 characters)" className="bg-[#0B111E] font-mono text-xs" />
-        <p className="text-[11px] text-slate-500">Paste it after sending; we check it on Etherscan and mark the fee paid straight away.</p>
+        <Input data-testid={`${prefix}-tx-hash-input`} value={hash} onChange={(e) => setHash(e.target.value.trim())} placeholder="0x… (64 characters)" className="bg-[#0B111E] font-mono text-xs" />
+        <p className="text-[11px] text-slate-500">Paste it after sending; we check it on Etherscan and mark it paid straight away.</p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button data-testid="fee-verify-button" disabled={busy || !hash} onClick={() => pay({ tx_hash: hash }, "Payment verified on-chain")}>{busy ? "Checking…" : "Verify payment"}</Button>
-        <Button variant="outline" data-testid="pay-onboarding-button" disabled={busy} onClick={() => pay({}, "Marked as paid — the admin will confirm")}>I've paid — admin will confirm</Button>
+        <Button data-testid={`${prefix}-verify-button`} disabled={busy || !hash} onClick={() => pay({ tx_hash: hash })}>{busy ? "Checking…" : "Verify payment"}</Button>
+        <Button variant="outline" data-testid={`${prefix}-manual-button`} disabled={busy} onClick={() => pay({})}>{manualLabel}</Button>
       </div>
+    </div>
+  );
+};
+
+const InvoicePay = ({ inv, refresh, prefix }) => {
+  const [wallet, setWallet] = useState(null);
+  useEffect(() => { api.get("/onboarding-fee").then((r) => setWallet(r.data.wallet || "")); }, []);
+  if (wallet === null) return null;
+  if (!wallet) return <p data-testid="fee-wallet-missing" className="text-sm text-amber-300">The admin hasn't set the payment wallet yet. You'll be able to pay as soon as it's added.</p>;
+  return <PayBox prefix={prefix} amount={fee(inv)} wallet={wallet} manualLabel="I've paid — admin will confirm"
+    onPay={(body) => call(() => api.post(`/invoices/${inv.id}/pay`, body), body.tx_hash ? "Payment verified on-chain" : "Marked as paid — the admin will confirm", refresh)} />;
+};
+
+const shareState = (s) => (s?.verified ? "Paid · verified on-chain" : s?.confirmed_at ? "Paid · confirmed" : s?.submitted_at ? "Paid · awaiting confirmation" : "Not paid yet");
+
+export const FeeSplit = ({ tx }) => {
+  const sf = tx.settlement_fees || {};
+  if (!sf.sender) return null;
+  const pr = tx.settlement_fee_price || {};
+  return (
+    <div data-testid="fee-split" className="mb-4 rounded-md border border-[#26354D] bg-[#0B111E] p-4">
+      <div className="eyebrow mb-2">Escrow fees — split 50/50</div>
+      {["sender", "recipient"].map((p) => (
+        <div key={p} data-testid={`fee-split-${p}`} className="flex flex-wrap items-center justify-between gap-2 border-b border-[#26354D]/60 py-2 last:border-0">
+          <div><div className="text-sm text-white">{tx[`${p}_name`]}</div><div className="text-[11px] capitalize text-slate-500">{p}</div></div>
+          <div className="text-right">
+            <div className="font-mono text-sm text-white">{ethExact(sf[p].eth_amount)}</div>
+            <div className="font-mono text-[11px] text-slate-400">{usd(sf[p].usd_amount)}</div>
+            <div data-testid={`fee-split-${p}-status`} className={`text-[11px] ${sf[p].submitted_at ? "text-emerald-300" : "text-amber-300"}`}>{shareState(sf[p])}</div>
+          </div>
+        </div>
+      ))}
+      {pr.eth_usd && <p className="mt-2 text-[11px] text-slate-500">Priced at {usd(pr.eth_usd, 2)} per ETH (live market price when the funds were requested).</p>}
     </div>
   );
 };
 
 const PartyStep = ({ tx, party, act, refresh }) => {
   const s = tx.current_step;
-  const inv = useFeeInvoice(tx);
+  const sf = tx.settlement_fees?.[party] || {};
+  const inv = useInvoice(tx, sf.invoice_id, sf.submitted_at);
   const of = tx.onboarding_fees?.[party] || {};
   const obInv = useInvoice(tx, of.invoice_id, of.submitted_at);
   const ob = tx.onboarding[party];
@@ -137,34 +162,31 @@ const PartyStep = ({ tx, party, act, refresh }) => {
   if (s <= 3 && obInv && !of.submitted_at)
     return (
       <Card title="Pay the onboarding fee" text="Because of the size of this deal, each party pays an onboarding fee to open their escrow account. Both parties must pay before the admin can approve.">
-        <InvoiceBox inv={obInv}><OnboardingPay inv={obInv} refresh={refresh} /></InvoiceBox>
+        <InvoiceBox inv={obInv}><InvoicePay inv={obInv} refresh={refresh} prefix="fee" /></InvoiceBox>
       </Card>
     );
   if (party === "sender" && s === 5)
     return (
-      <Card title="Deposit ETH into escrow" text={`The escrow is open. Send ${ethFmt(tx.eth_quantity, 2)} to the escrow wallet.`}>
-        <div className="mb-4 rounded-md border border-[#26354D] bg-[#0B111E] p-4">
-          <KV label="Amount" value={ethFmt(tx.eth_quantity, 6)} mono />
-          <KV label="Escrow wallet" value={tx.escrow_vault_address} mono />
-        </div>
-        <Button data-testid="deposit-button" onClick={() => act("deposit", {}, "Deposit sent")}>Deposit {ethFmt(tx.eth_quantity, 2)}</Button>
+      <Card title="Deposit ETH into escrow" text={`The escrow is open. Send ${ethExact(tx.eth_quantity)} from your registered wallet to the escrow wallet below.`}>
+        <PayBox prefix="deposit" amount={ethExact(tx.eth_quantity)} wallet={tx.escrow_vault_address} manualLabel="I've sent it — admin will confirm"
+          onPay={(body) => act("deposit", body, body.tx_hash ? "Deposit verified on-chain" : "Deposit marked as sent — the admin will confirm")} />
       </Card>
     );
   if (party === "recipient" && s === 8)
     return (
-      <Card title="Request your funds" text="The AML report has been released. Review it on the Forensics page, then request the funds.">
-        <Button data-testid="request-release-button" onClick={() => act("request_release", {}, "Funds requested")}>Request {ethFmt(tx.eth_quantity, 2)}</Button>
+      <Card title="Request your funds" text={`The AML report has been released (see Forensics). When you request the funds, the escrow fees are split 50/50 between you and the sender at the live ETH price. Funds go to ${tx.onboarding.recipient.data.wallet_address}.`}>
+        <Button data-testid="request-release-button" onClick={() => act("request_release", {}, "Funds requested — escrow fees are now due")}>Request {ethFmt(tx.eth_quantity, 2)}</Button>
       </Card>
     );
-  if (party === "recipient" && s === 9 && inv)
+  if (s === 9 && inv && !sf.submitted_at)
     return (
-      <Card title="Withdrawal AML & fees" text="Before the funds are released, a withdrawal AML check is run on your wallet and the escrow fees are settled.">
-        <div className="mb-4 rounded-md border border-[#26354D] bg-[#0B111E] p-4">
-          <KV label="Receiving wallet" value={tx.onboarding.recipient.data.wallet_address} mono />
-        </div>
-        <InvoiceBox inv={inv}><Button data-testid="pay-fee-button" onClick={() => call(() => api.post(`/invoices/${inv.id}/pay`), "Withdrawal AML & fees submitted", refresh)}>Complete AML & pay {fee(inv)}</Button></InvoiceBox>
+      <Card title="Pay your half of the escrow fees" text="The escrow fees are shared equally between the sender and the recipient. Once both halves are paid, the admin releases the funds and closes the escrow.">
+        <FeeSplit tx={tx} />
+        <InvoiceBox inv={inv}><InvoicePay inv={inv} refresh={refresh} prefix="share" /></InvoiceBox>
       </Card>
     );
+  if (s >= 9 && sf.submitted_at)
+    return <Card title="Your half of the escrow fees is paid" text={s === 9 ? "Waiting for the other party to pay their half." : "Both halves are paid. Waiting for the admin to release the funds."}><FeeSplit tx={tx} /></Card>;
   const step = tx.steps[s - 1];
   if (s === 3 && of.submitted_at)
     return <Card title="Your onboarding fee is paid" text={of.confirmed_at ? "Payment confirmed. Waiting for the other party to pay theirs." : "The admin will confirm your payment. Waiting for the other party to pay too."} />;
@@ -256,6 +278,25 @@ const InviteForm = ({ tx }) => {
   );
 };
 
+const ReleaseCard = ({ tx, act }) => {
+  const [hash, setHash] = useState("");
+  const to = tx.onboarding.recipient.data.wallet_address;
+  return (
+    <Card title="Release the funds & close the escrow" text={`Both halves of the escrow fees are paid. Send ${ethExact(tx.eth_quantity)} to ${tx.recipient_name}, then record the release.`}>
+      <FeeSplit tx={tx} />
+      <div className="mb-4 space-y-1.5">
+        <KV label="Recipient wallet" value={to} mono testid="release-recipient-wallet" />
+        <Label>Release transaction hash (optional)</Label>
+        <Input data-testid="release-tx-hash-input" value={hash} onChange={(e) => setHash(e.target.value.trim())} placeholder="0x… checked on Etherscan if provided" className="bg-[#0B111E] font-mono text-xs" />
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button data-testid="release-approve-button" onClick={() => act("release", { decision: "approved", tx_hash: hash }, "Funds released — escrow closed")}>Release funds & close</Button>
+        <Button variant="outline" data-testid="release-decline-button" onClick={() => act("release", { decision: "rejected" }, "Release request declined")}>Decline</Button>
+      </div>
+    </Card>
+  );
+};
+
 const AdminStep = ({ tx, act }) => {
   const s = tx.current_step;
   const nav = useNavigate();
@@ -274,11 +315,10 @@ const AdminStep = ({ tx, act }) => {
   if (s === 3) return <Card title="Waiting for onboarding fees" text={`Sender: ${feeState("sender")} · Recipient: ${feeState("recipient")}`} />;
   if (s === 4) return <Card title="Approve both parties" text="Both onboarding fees are paid. Check their details, then approve to open the escrow."><ApproveParties tx={tx} act={act} /></Card>;
   if (s === 6) {
-    const ready = tx.deposit.confirmations >= 12;
+    const dep = tx.deposit;
     return (
-      <Card title="Run AML checks on the deposit" text={ready ? "The deposit is confirmed. Complete the AML checks (you can review each check on the Checks page)." : "Waiting for the deposit to confirm…"}>
-        <Confirmations n={tx.deposit.confirmations} />
-        <Button className="mt-4" disabled={!ready} data-testid="verify-deposit-button" onClick={() => act("verify_deposit", {}, "AML checks completed")}>Complete AML checks</Button>
+      <Card title="Confirm the deposit & run AML checks" text={dep.verified_onchain ? `The deposit of ${ethExact(dep.eth_quantity)} was verified on-chain (block ${dep.block_number}). Complete the AML checks (see the Checks page).` : `The sender says they sent ${ethExact(dep.eth_quantity)} to ${dep.to_address}. Check it arrived in your wallet before completing the AML checks.`}>
+        <Button data-testid="verify-deposit-button" onClick={() => act("verify_deposit", {}, "AML checks completed")}>{dep.verified_onchain ? "Complete AML checks" : "Deposit received — complete AML checks"}</Button>
       </Card>
     );
   }
@@ -291,15 +331,8 @@ const AdminStep = ({ tx, act }) => {
         </div>
       </Card>
     );
-  if (s === 10)
-    return (
-      <Card title="Release the funds" text={`The recipient completed withdrawal AML and fees. Release ${ethFmt(tx.eth_quantity, 2)} to ${tx.recipient_name}.`}>
-        <div className="flex gap-2">
-          <Button data-testid="release-approve-button" onClick={() => act("release", { decision: "approved" }, "Funds released — deal completed")}>Release funds</Button>
-          <Button variant="outline" data-testid="release-decline-button" onClick={() => act("release", { decision: "rejected" }, "Release request declined")}>Decline</Button>
-        </div>
-      </Card>
-    );
+  if (s === 9) return <Card title="Waiting for the escrow fees" text="Each party pays half. Confirm manual payments on the Payments page once they reach your wallet."><FeeSplit tx={tx} /></Card>;
+  if (s === 10) return <ReleaseCard tx={tx} act={act} />;
   const step = tx.steps[s - 1];
   return <Card title="Nothing to do right now" text={`Waiting for ${WHO[step.actor]}: ${step.title.toLowerCase()}.`} />;
 };

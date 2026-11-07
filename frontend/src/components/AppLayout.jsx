@@ -25,7 +25,7 @@ const SideNav = ({ onNavigate }) => {
           <div className="flex h-8 w-8 items-center justify-center rounded-sm border border-amber-400/50 bg-amber-400/10 font-mono text-sm font-bold text-amber-300">VB</div>
           <div>
             <div className="text-sm font-bold tracking-[0.18em] text-white">VAULTBRIDGE</div>
-            <div className="font-mono text-[10px] tracking-[0.3em] text-sky-300">ESCROW <span data-testid="demo-badge" className="ml-1 rounded-sm border border-amber-400/40 px-1 tracking-wider text-amber-300">DEMO</span></div>
+            <div className="font-mono text-[10px] tracking-[0.3em] text-sky-300">ESCROW</div>
           </div>
         </div>
       </div>
