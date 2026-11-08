@@ -15,16 +15,29 @@ const Field = ({ id, label, ...p }) => (
   </div>
 );
 
+const BrandMark = ({ className = "" }) => (
+  <div className={`flex items-center gap-3 ${className}`}>
+    <img src="/tmx-logo.png" alt="TMX" className="h-11 w-11 rounded-lg bg-white object-contain p-1 shadow-sm" />
+    <div>
+      <div className="text-base font-bold tracking-[0.18em] text-white">TSX TRUST</div>
+      <div className="font-mono text-[10px] tracking-[0.3em] text-sky-300">ESCROW</div>
+    </div>
+  </div>
+);
+
 const Hero = () => (
   <div className="grain relative hidden overflow-hidden lg:block">
     <img src="/vault.jpg" alt="Ethereum emblem" className="absolute inset-0 h-full w-full object-cover opacity-40" />
     <div className="absolute inset-0 bg-gradient-to-t from-[#0B111E] via-[#0B111E]/70 to-[#0B111E]/30" />
-    <div className="relative flex h-full flex-col justify-end p-14">
-      <div className="eyebrow text-amber-300">Digital asset escrow</div>
-      <h1 className="mt-4 max-w-xl text-5xl font-bold leading-tight tracking-tight text-white">TSX Trust</h1>
-      <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-300">
-        Hold ETH safely between a sender and a recipient. Join, sign, deposit, release — in 10 simple steps.
-      </p>
+    <div className="relative flex h-full flex-col justify-between p-14">
+      <BrandMark />
+      <div>
+        <div className="eyebrow text-amber-300">Digital asset escrow</div>
+        <h1 className="mt-4 max-w-xl text-5xl font-bold leading-tight tracking-tight text-white">TSX Trust</h1>
+        <p className="mt-4 max-w-md text-sm leading-relaxed text-slate-300">
+          Hold ETH safely between a sender and a recipient. Join, sign, deposit, release — in 10 simple steps.
+        </p>
+      </div>
     </div>
   </div>
 );
@@ -78,6 +91,7 @@ export default function Login() {
         <Hero />
         <div className="flex items-center justify-center px-5 py-12">
           <div className="w-full max-w-md rise">
+            <BrandMark className="mb-8 lg:hidden" />
             <div className="eyebrow mb-3" data-testid="login-stage">{eyebrow}</div>
             <h2 className="text-3xl font-bold tracking-tight text-white">{title}</h2>
             {stage === "register" && (

@@ -26,7 +26,7 @@ const SideNav = ({ onNavigate }) => {
     <div className="flex h-full flex-col">
       <div className="border-b border-[#26354D] px-5 py-5">
         <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-10 items-center justify-center rounded-sm border border-amber-400/50 bg-amber-400/10 font-mono text-[11px] font-bold tracking-wide text-amber-300">TSX</div>
+          <img src="/tmx-logo.png" alt="TMX" className="h-9 w-9 rounded-md bg-white object-contain p-0.5" />
           <div>
             <div className="text-sm font-bold tracking-[0.18em] text-white">TSX TRUST</div>
             <div className="font-mono text-[10px] tracking-[0.3em] text-sky-300">ESCROW</div>

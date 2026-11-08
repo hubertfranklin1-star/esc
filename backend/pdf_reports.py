@@ -1,9 +1,11 @@
 import io
+import os
 from datetime import datetime, timezone
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle
 
 NAVY = colors.HexColor("#0B111E")
@@ -11,6 +13,34 @@ BLUE = colors.HexColor("#0284C7")
 GOLD = colors.HexColor("#B7791F")
 
 FOOTER = "TSX Trust demo environment — not a real financial, regulatory or blockchain record"
+LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "tmx-logo.png")
+try:
+    _LOGO = ImageReader(LOGO_PATH)
+except Exception:
+    _LOGO = None
+
+
+def _brand_band(canvas, subtitle: str):
+    """Navy header band with the TMX logo on a white chip and the TSX TRUST wordmark."""
+    w, h = A4
+    canvas.setFillColor(NAVY)
+    canvas.rect(0, h - 22 * mm, w, 22 * mm, fill=1, stroke=0)
+    text_x = 18 * mm
+    if _LOGO is not None:
+        chip = 13 * mm
+        chip_y = h - 11 * mm - chip / 2
+        canvas.setFillColor(colors.white)
+        canvas.roundRect(16 * mm, chip_y, chip, chip, 2.5 * mm, fill=1, stroke=0)
+        pad = 1.6 * mm
+        canvas.drawImage(_LOGO, 16 * mm + pad, chip_y + pad, chip - 2 * pad, chip - 2 * pad,
+                         mask="auto", preserveAspectRatio=True)
+        text_x = 16 * mm + chip + 5 * mm
+    canvas.setFillColor(colors.white)
+    canvas.setFont("Helvetica-Bold", 13)
+    canvas.drawString(text_x, h - 10 * mm, "TSX TRUST")
+    canvas.setFont("Helvetica", 8)
+    canvas.setFillColor(colors.HexColor("#93C5FD"))
+    canvas.drawString(text_x, h - 15 * mm, subtitle)
 
 
 def _decorate(canvas, doc):
@@ -23,13 +53,7 @@ def _decorate(canvas, doc):
     canvas.drawCentredString(0, 0, "DEMO")
     canvas.restoreState()
     canvas.saveState()
-    canvas.setFillColor(NAVY)
-    canvas.rect(0, h - 22 * mm, w, 22 * mm, fill=1, stroke=0)
-    canvas.setFillColor(colors.white)
-    canvas.setFont("Helvetica-Bold", 13)
-    canvas.drawString(18 * mm, h - 12 * mm, "TSX TRUST")
-    canvas.setFont("Helvetica", 8)
-    canvas.drawString(18 * mm, h - 17 * mm, "Digital asset escrow")
+    _brand_band(canvas, "Digital asset escrow")
     canvas.setFillColor(colors.HexColor("#64748B"))
     canvas.setFont("Helvetica", 7)
     canvas.drawCentredString(w / 2, 10 * mm, FOOTER)
@@ -42,13 +66,7 @@ def _decorate(canvas, doc):
 def _forensic_page(canvas, doc):
     w, h = A4
     canvas.saveState()
-    canvas.setFillColor(NAVY)
-    canvas.rect(0, h - 22 * mm, w, 22 * mm, fill=1, stroke=0)
-    canvas.setFillColor(colors.white)
-    canvas.setFont("Helvetica-Bold", 13)
-    canvas.drawString(18 * mm, h - 12 * mm, "TSX TRUST")
-    canvas.setFont("Helvetica", 8)
-    canvas.drawString(18 * mm, h - 17 * mm, "On-Chain Forensic Analysis & Wallet Due-Diligence")
+    _brand_band(canvas, "On-Chain Forensic Analysis & Wallet Due-Diligence")
     canvas.setFillColor(colors.HexColor("#64748B"))
     canvas.setFont("Helvetica", 6.5)
     canvas.drawCentredString(w / 2, 10 * mm, "Generated from live public Ethereum data (public explorer APIs and Ethereum nodes) and the OFAC SDN digital currency address list. "
