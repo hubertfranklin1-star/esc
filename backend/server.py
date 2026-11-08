@@ -368,6 +368,36 @@ async def new_transaction(reference: str, usd_value: float, sender_name: str, re
     return tx
 
 
+def email_shell(title: str, body: str) -> str:
+    """Branded TSX Trust email: navy header with the TMX logo and wordmark, gold accent, light card, navy footer."""
+    base = os.environ["APP_URL"].rstrip("/")
+    logo = f"{base}/tmx-logo.png"
+    return (
+        "<div style='margin:0;padding:0;background:#eef2f7'>"
+        "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' style='background:#eef2f7'>"
+        "<tr><td align='center' style='padding:28px 12px'>"
+        "<table role='presentation' width='600' cellpadding='0' cellspacing='0' style='max-width:600px;width:100%;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0'>"
+        # header band
+        "<tr><td style='background:#0B111E;padding:22px 28px'>"
+        "<table role='presentation' width='100%' cellpadding='0' cellspacing='0'><tr>"
+        f"<td width='52' valign='middle'><img src='{logo}' alt='TMX' width='48' height='48' style='display:block;width:48px;height:48px;border-radius:10px;background:#ffffff' /></td>"
+        "<td valign='middle' style='padding-left:14px;font-family:Arial,Helvetica,sans-serif'>"
+        "<div style='color:#ffffff;font-size:19px;font-weight:bold;letter-spacing:3px;line-height:1'>TSX&nbsp;TRUST</div>"
+        "<div style='color:#38BDF8;font-size:11px;letter-spacing:4px;margin-top:4px'>ESCROW</div></td>"
+        "</tr></table></td></tr>"
+        # gold accent rule
+        "<tr><td style='height:3px;background:#F59E0B;font-size:0;line-height:0'>&nbsp;</td></tr>"
+        # body
+        f"<tr><td style='padding:30px 28px;font-family:Arial,Helvetica,sans-serif;color:#0B111E;font-size:14px;line-height:1.55'>{body}</td></tr>"
+        # footer
+        "<tr><td style='background:#0B111E;padding:18px 28px;font-family:Arial,Helvetica,sans-serif;color:#94A3B8;font-size:12px;line-height:1.5'>"
+        f"Sent by {BRAND}. Open the link and continue with this email address — if you're new you'll create your own account and password, otherwise just sign in. "
+        "We will never ask you to share login or wallet secrets by email."
+        "</td></tr>"
+        "</table></td></tr></table></div>"
+    )
+
+
 def invite_html(tx: dict, p: str) -> str:
     link = os.environ["APP_URL"].rstrip("/") + "/login?" + urlencode({"email": tx["invite_emails"][p]})
     rules = ["Each party pays a one-time onboarding fee to open their escrow account.",
@@ -375,19 +405,31 @@ def invite_html(tx: dict, p: str) -> str:
              "The deposit is AML-screened on-chain and the AML report is shared with both parties.",
              "The recipient requests the funds; the escrow fees are then split 50/50 and each party pays their half in ETH.",
              "The admin then releases the ETH to the recipient's wallet."]
-    li = "".join(f"<li style='margin:4px 0'>{escape(r)}</li>" for r in rules)
-    return (f"<table role='presentation' width='100%'><tr><td style='padding:24px;font-family:Arial,sans-serif;color:#0B111E'>"
-            f"<h2 style='margin:0 0 12px'>You're invited to escrow deal {escape(tx['reference'])}</h2>"
-            f"<p>{escape(tx[f'{p}_name'])} is invited to join as <b>{p}</b>.</p>"
-            f"<table style='border-collapse:collapse;font-size:14px'>"
-            f"<tr><td style='padding:4px 12px 4px 0;color:#64748B'>Sender</td><td>{escape(tx['sender_name'])}</td></tr>"
-            f"<tr><td style='padding:4px 12px 4px 0;color:#64748B'>Recipient</td><td>{escape(tx['recipient_name'])}</td></tr>"
-            f"<tr><td style='padding:4px 12px 4px 0;color:#64748B'>Deal value</td><td>{escape(money(tx['usd_value']))} ({escape(eth(tx['eth_quantity']))})</td></tr>"
-            f"<tr><td style='padding:4px 12px 4px 0;color:#64748B'>Network</td><td>{escape(tx['network'])}</td></tr></table>"
-            f"<h3 style='margin:18px 0 6px'>Escrow rules</h3><ol style='padding-left:18px;font-size:14px'>{li}</ol>"
-            f"<p style='margin:20px 0'><a href='{link}' style='background:#0284C7;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none'>Enter the escrow</a></p>"
-            f"<p style='font-size:12px;color:#888'>Sent by {BRAND}. Open the link and continue with this email address: if you're new you'll create your own account and password, otherwise just sign in. We will never ask you to share login or wallet secrets by email.</p>"
-            f"</td></tr></table>")
+    li = "".join(f"<li style='margin:6px 0'>{escape(r)}</li>" for r in rules)
+    row = ("<tr><td style='padding:7px 14px 7px 0;color:#64748B;white-space:nowrap'>{k}</td>"
+           "<td style='padding:7px 0;color:#0B111E;font-weight:bold'>{v}</td></tr>")
+    details = (
+        "<table role='presentation' width='100%' cellpadding='0' cellspacing='0' "
+        "style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;margin:4px 0 8px'>"
+        "<tr><td style='padding:10px 16px 2px'>"
+        "<table role='presentation' width='100%' cellpadding='0' cellspacing='0'>"
+        + row.format(k="Sender", v=escape(tx['sender_name']))
+        + row.format(k="Recipient", v=escape(tx['recipient_name']))
+        + row.format(k="Deal value", v=f"{escape(money(tx['usd_value']))} ({escape(eth(tx['eth_quantity']))})")
+        + row.format(k="Network", v=escape(tx['network']))
+        + "</table></td></tr></table>")
+    body = (
+        f"<div style='color:#F59E0B;font-size:11px;letter-spacing:2px;font-weight:bold'>YOU'RE INVITED</div>"
+        f"<h1 style='margin:8px 0 6px;font-size:22px;color:#0B111E'>Escrow deal {escape(tx['reference'])}</h1>"
+        f"<p style='margin:0 0 18px;color:#334155'>{escape(tx[f'{p}_name'])} is invited to join this deal as <b>{escape(p)}</b>.</p>"
+        f"{details}"
+        f"<h3 style='margin:22px 0 6px;font-size:15px;color:#0B111E'>How the escrow works</h3>"
+        f"<ol style='padding-left:20px;margin:0;color:#334155'>{li}</ol>"
+        f"<table role='presentation' cellpadding='0' cellspacing='0' style='margin:26px 0 6px'><tr>"
+        f"<td style='border-radius:8px;background:#0284C7'>"
+        f"<a href='{link}' style='display:inline-block;padding:13px 26px;color:#ffffff;font-weight:bold;font-size:15px;text-decoration:none'>Enter the escrow &rarr;</a>"
+        f"</td></tr></table>")
+    return email_shell(f"Escrow deal {tx['reference']}", body)
 
 
 class InviteEmailsIn(BaseModel):
